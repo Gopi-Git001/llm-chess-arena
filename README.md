@@ -4,6 +4,8 @@ Two LLMs play chess against each other through OpenRouter. A third LLM watches
 the finished game, grades both players, and delivers a verdict. Everything
 streams live to a browser over one WebSocket.
 
+![LLM Chess Arena — two model agents mid-game, each showing its reasoning, with a live move list](docs/screenshot.jpg)
+
 The chess engine (`python-chess`) is always the source of truth — the models only
 *propose* moves. Illegal proposals get retried, then overridden with a random
 legal move, and the Analyst gets to mock the model for it.
