@@ -1,0 +1,46 @@
+# Two commands to a running arena:
+#   docker compose up --build
+#   open http://localhost:8080  → New Game
+#
+# Defaults to mock mode: no API key needed, zero OpenRouter calls. To play live,
+# set OPENROUTER_API_KEY (and MODE=live) in a .env file next to this one, or in
+# your shell, then `docker compose up`.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      # config.yaml ships mock; MODE here overrides it for a live run.
+      MODE: ${MODE:-mock}
+      # Empty in mock mode. Compose reads this from a sibling .env if present.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_SITE_URL: ${OPENROUTER_SITE_URL:-http://localhost:8080}
+      OPENROUTER_SITE_NAME: ${OPENROUTER_SITE_NAME:-LLM Chess Arena}
+    volumes:
+      # Persist the game database across restarts.
+      - arena-data:/app/data
+    # Not published to the host — the frontend proxies to it over the network.
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  arena-data:

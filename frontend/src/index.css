@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+
+/* Dark mode is the default per PLAN.md §9. */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}

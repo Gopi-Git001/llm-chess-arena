@@ -1,0 +1,13 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+# The library PLAN.md calls "python-chess" ships on PyPI as `chess`; the
+# `python-chess` name is now a stub that just depends on `chess`. Import is
+# `import chess` either way.
+chess>=1.11
+httpx>=0.27
+pydantic>=2.9
+pydantic-settings>=2.6
+PyYAML>=6.0
+websockets>=13.0
+pytest>=8.3
+pytest-asyncio>=0.24

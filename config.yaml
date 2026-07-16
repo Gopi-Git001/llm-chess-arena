@@ -1,0 +1,28 @@
+openrouter:
+  base_url: https://openrouter.ai/api/v1
+  # VERIFY before first live run: python scripts/verify_models.py
+  # OpenRouter's free lineup rotates. Fallback that always works: openrouter/free
+  # gpt-oss-120b:free rotated out of the free lineup (verify_models, 2026-07-16);
+  # gpt-oss-20b:free is live and was a PLAN.md-recommended pick.
+  white_model: openai/gpt-oss-20b:free
+  black_model: meta-llama/llama-3.3-70b-instruct:free
+  analyst_model: qwen/qwen3-coder:free
+  fallback_model: openrouter/free
+  request_timeout_s: 60
+  max_tokens_move: 300
+  max_tokens_analysis: 1500
+
+throttle:
+  min_seconds_between_requests: 4    # 15/min, safely under the 20/min cap
+  max_requests_per_game: 250         # hard kill-switch
+
+game:
+  max_moves: 120                     # engine adjudicates draw beyond this
+  illegal_move_retries: 3            # then random legal move fallback
+  live_commentary_every_n_moves: 0   # 0 = off (saves quota); 5 = chatty mode
+  move_delay_ui_ms: 800              # min pacing so the UI feels watchable
+
+# mock = zero API calls (MockPlayer/MockAnalyst). live = real OpenRouter calls.
+# Default is mock per the project's working rules; switch to live only for an
+# explicit, budgeted live run.
+mode: mock
