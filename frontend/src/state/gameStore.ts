@@ -249,8 +249,12 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       case 'GAME_OVER': {
         const data = event.data as unknown as GameOverData
+        // Respect how the game actually ended so an aborted game doesn't render
+        // as a normal finish (and vice versa).
+        const finalStatus: GameStatus =
+          data.status === 'aborted' ? 'aborted' : data.status === 'error' ? 'error' : 'finished'
         set({
-          status: 'finished',
+          status: finalStatus,
           result: data.result,
           termination: data.termination,
           winner: data.winner,

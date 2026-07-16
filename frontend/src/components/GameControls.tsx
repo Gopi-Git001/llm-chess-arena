@@ -13,6 +13,9 @@ import QuotaMeter from './QuotaMeter'
 type GameControlsProps = {
   onNewGame: () => void
   onAbort: () => void
+  onReset: () => void
+  hasGame: boolean
+  aborting: boolean
   busy: boolean
   running: boolean
   speedMs: number
@@ -90,6 +93,9 @@ export default function GameControls(props: GameControlsProps) {
   const {
     onNewGame,
     onAbort,
+    onReset,
+    hasGame,
+    aborting,
     busy,
     running,
     speedMs,
@@ -130,9 +136,22 @@ export default function GameControls(props: GameControlsProps) {
           <button
             type="button"
             onClick={onAbort}
-            className="rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
+            disabled={aborting}
+            className="rounded-md border border-amber-800 px-3 py-2 text-sm text-amber-300 hover:bg-amber-950/50 disabled:opacity-50"
+            title="Stop the game now"
           >
-            Abort
+            {aborting ? 'Aborting…' : 'Abort'}
+          </button>
+        )}
+
+        {hasGame && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
+            title="Clear the board and return to the start screen"
+          >
+            Reset
           </button>
         )}
 

@@ -149,12 +149,45 @@ export default function App() {
     }
   }, [whiteModel, blackModel, analystModel, speedMs, chaos, commentary])
 
+  const [aborting, setAborting] = useState(false)
   const handleAbort = useCallback(async () => {
-    if (gameId) await abortGame(gameId)
+    if (!gameId) return
+    setAborting(true)
+    try {
+      await abortGame(gameId)
+      // The backend emits GAME_OVER(status: aborted) over the WS, which flips
+      // the store to 'aborted'. This is just the request; the event does the UI.
+    } catch (error) {
+      useGameStore.getState().pushToast(`Abort failed: ${(error as Error).message}`, 'error')
+    } finally {
+      setAborting(false)
+    }
   }, [gameId])
 
+  // Reset: stop the current game (if running) and clear back to the start
+  // screen — a blank board and "New Game", from any state, any time.
+  const handleReset = useCallback(async () => {
+    const id = gameId
+    const isRunning = store.status === 'in_progress' || store.status === 'pending'
+    setGameId(null) // tears down the WS stream via the effect cleanup
+    useGameStore.getState().reset()
+    setViewPly(null)
+    const url = new URL(window.location.href)
+    url.searchParams.delete('game')
+    window.history.replaceState({}, '', url)
+    // Best-effort: don't leave an orphaned game running in the background.
+    if (id && isRunning) {
+      try {
+        await abortGame(id)
+      } catch {
+        /* the game is already detached from the UI; ignore */
+      }
+    }
+  }, [gameId, store.status])
+
   const running = store.status === 'in_progress' || store.status === 'pending'
-  const gameOver = store.status === 'finished' || store.status === 'aborted'
+  const gameOver =
+    store.status === 'finished' || store.status === 'aborted' || store.status === 'error'
 
   // What the board shows: live latest, or a scrubbed-to position.
   const displayFen = viewPly === null ? store.fen : fenAtPly(store.moves, viewPly)
@@ -175,6 +208,9 @@ export default function App() {
         <GameControls
           onNewGame={handleNewGame}
           onAbort={handleAbort}
+          onReset={handleReset}
+          hasGame={Boolean(gameId)}
+          aborting={aborting}
           busy={busy}
           running={running}
           speedMs={speedMs}
@@ -248,7 +284,14 @@ export default function App() {
 
           {store.status === 'aborted' && (
             <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-900 p-3 text-center text-sm text-zinc-400">
-              Game aborted.
+              Game aborted. Press <strong className="text-zinc-300">New Game</strong> or{' '}
+              <strong className="text-zinc-300">Reset</strong>.
+            </div>
+          )}
+
+          {store.status === 'error' && (
+            <div className="mt-3 rounded-lg border border-red-900 bg-red-950/40 p-3 text-center text-sm text-red-300">
+              The game stopped due to an error{store.error ? `: ${store.error}` : ''}.
             </div>
           )}
         </section>

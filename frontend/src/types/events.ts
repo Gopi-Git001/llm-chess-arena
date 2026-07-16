@@ -75,6 +75,8 @@ export type GameOverData = {
   ply_count: number
   pgn: string
   requests_used: number
+  // Why the game ended. Absent on older events → treat as a normal finish.
+  status?: 'finished' | 'aborted' | 'error'
 }
 
 export type ErrorData = { message: string; requests_used?: number }

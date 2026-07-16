@@ -306,7 +306,29 @@ class TestControlPaths:
 
         assert summary["status"] == "aborted"
         assert store.get_game(orch.game_id)["status"] == "aborted"
-        assert not any(e.type == EventType.GAME_OVER for e in orch.bus.history)
+
+    async def test_abort_emits_a_terminal_event_so_the_ui_updates(self, store):
+        """Regression: abort emitted no event, so the live UI froze with a stale
+        Abort button until a manual refresh. It must send a terminal GAME_OVER
+        tagged status=aborted."""
+        orch = build(store, MockPlayer(seed=70, color="white"), MockPlayer(seed=71, color="black"))
+        orch.abort()
+        await orch.run()
+
+        overs = [e for e in orch.bus.history if e.type == EventType.GAME_OVER]
+        assert len(overs) == 1
+        assert overs[0].data["status"] == "aborted"
+        # Aborted games get no verdict.
+        assert not any(e.type == EventType.VERDICT for e in orch.bus.history)
+
+    async def test_finished_game_over_event_is_tagged_finished(self, store):
+        white = ScriptedPlayer(["f2f3", "g2g4"], color="white")
+        black = ScriptedPlayer(["e7e5", "d8h4"], color="black")
+        orch = build(store, white, black)
+        await orch.run()
+
+        over = [e for e in orch.bus.history if e.type == EventType.GAME_OVER][0]
+        assert over.data["status"] == "finished"
 
     async def test_crash_marks_the_game_errored_rather_than_stuck(self, store):
         class ExplodingPlayer(BasePlayer):

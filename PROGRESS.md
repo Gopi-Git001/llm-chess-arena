@@ -13,6 +13,22 @@ Session log. Append after every phase. At the start of every session: re-read
 
 ---
 
+## POST-PHASE-5 — Abort fix + Reset button (2026-07-16)
+
+- **Fixed abort.** `_finish` only emitted `GAME_OVER` for *finished* games, so
+  aborting sent no terminal event: the backend stopped the game but the live UI
+  froze with a stale "Abort" button until a manual refresh. `_finish` now emits
+  a terminal `GAME_OVER` for every ending, tagged `status: finished | aborted |
+  error`; the frontend maps that to the real status. Verified in-browser: Abort
+  now shows the "Game aborted." banner, hides the button, and freezes the board
+  live. Regression tests added (orchestrator + API).
+- **Added a Reset button.** Clears back to the start screen from any state —
+  stops the game if running, resets the store, drops `?game=` from the URL. Also
+  gave Abort an "Aborting…" state and added an error banner.
+- Docker images rebuilt with the fix. 332 backend tests pass.
+
+---
+
 ## LIVE RUN — 2026-07-16 (user approved "run live")
 
 One live game, `max_moves: 30`, commentary off, `MODE=live` scoping (config.yaml

@@ -327,19 +327,22 @@ class GameOrchestrator:
             status=status,
         )
 
-        if status == "finished":
-            self._emit(
-                EventType.GAME_OVER,
-                {
-                    "result": result,
-                    "termination": termination,
-                    "winner": engine.winner,
-                    "fen": engine.fen,
-                    "ply_count": engine.ply_count,
-                    "pgn": pgn,
-                    "requests_used": self.requests_used,
-                },
-            )
+        # Emit a terminal event for EVERY ending — finished, aborted, or error —
+        # so the live UI always resolves instead of freezing with a stale
+        # "Abort" button. (For finished games the verdict follows separately.)
+        self._emit(
+            EventType.GAME_OVER,
+            {
+                "result": result,
+                "termination": termination,
+                "winner": engine.winner,
+                "fen": engine.fen,
+                "ply_count": engine.ply_count,
+                "pgn": pgn,
+                "requests_used": self.requests_used,
+                "status": status,  # finished | aborted | error
+            },
+        )
 
         return {
             "game_id": self.game_id,

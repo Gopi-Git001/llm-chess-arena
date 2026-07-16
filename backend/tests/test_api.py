@@ -175,6 +175,19 @@ class TestAbort:
         response = client.post(f"/api/games/{created['game_id']}/abort")
         assert response.status_code == 200
 
+    def test_abort_emits_game_over_so_the_ui_can_update(self, client):
+        """Regression: abort sent no terminal event, so the live UI froze until
+        a refresh. The event stream must carry GAME_OVER(status=aborted)."""
+        created = new_game(client, move_delay_ms=200, max_moves=120)
+        wait_for_moves(client, created["game_id"], 1)
+        client.post(f"/api/games/{created['game_id']}/abort")
+        wait_for_finish(client, created["game_id"])
+
+        events = client.get(f"/api/games/{created['game_id']}").json()["events"]
+        overs = [e for e in events if e["type"] == "GAME_OVER"]
+        assert len(overs) == 1
+        assert overs[0]["data"]["status"] == "aborted"
+
 
 class TestEventStream:
     def test_ws_streams_a_game_from_start_to_finish(self, client):
