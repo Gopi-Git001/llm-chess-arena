@@ -13,6 +13,30 @@ Session log. Append after every phase. At the start of every session: re-read
 
 ---
 
+## POST-PHASE-5 — Live voice commentary (2026-07-16)
+
+Spoken commentary via the browser's Web Speech API (`speechSynthesis`) — free,
+offline, no API cost, in keeping with mock mode. New **🎙️ Voice** toggle.
+
+- `lib/commentary.ts` — phrase banks + `reactionForMove` / `openerLine` /
+  `finaleLine`. Names the captured piece ("Black snatches a pawn!"); every win
+  opens with an excited shout ("Unbelievable! … comes out on top!"), with calmer
+  draw lines and an abort sign-off.
+- `hooks/useVoice.ts` — TTS wrapper: async voice loading, a high-priority
+  interrupt for big moments, drops backlog so speech stays in sync, stops on
+  toggle-off.
+- `hooks/useVoiceCommentary.ts` — drives it off the store: opener on game start,
+  reactions to notable moves (capture/check/mate/forfeit — quiet moves stay
+  silent), the analyst's commentary lines as they arrive, and the finale.
+  Turning Voice on also enables analyst commentary so there are lines to read.
+- Verified in-browser via a `speechSynthesis.speak` spy (can't hear audio in the
+  test env): a full game spoke 46–47 lines — opener, piece-named captures,
+  analyst lines, and a shout-led finale matching the result.
+
+No backend changes; reuses existing COMMENTARY events + client-side reactions.
+
+---
+
 ## POST-PHASE-5 — Abort fix + Reset button (2026-07-16)
 
 - **Fixed abort.** `_finish` only emitted `GAME_OVER` for *finished* games, so

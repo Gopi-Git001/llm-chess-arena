@@ -26,6 +26,9 @@ type GameControlsProps = {
   onCommentaryChange: (on: boolean) => void
   soundOn: boolean
   onSoundChange: (on: boolean) => void
+  voiceOn: boolean
+  onVoiceChange: (on: boolean) => void
+  voiceSupported: boolean
   onOpenHistory: () => void
   models: FreeModel[]
   whiteModel: string
@@ -106,6 +109,9 @@ export default function GameControls(props: GameControlsProps) {
     onCommentaryChange,
     soundOn,
     onSoundChange,
+    voiceOn,
+    onVoiceChange,
+    voiceSupported,
     onOpenHistory,
     models,
     whiteModel,
@@ -200,6 +206,21 @@ export default function GameControls(props: GameControlsProps) {
           <span>{soundOn ? '🔊' : '🔇'}</span>
           <span>Sound</span>
         </button>
+
+        {voiceSupported && (
+          <button
+            onClick={() => onVoiceChange(!voiceOn)}
+            className={`flex items-center gap-1 text-xs hover:text-zinc-200 ${voiceOn ? 'text-violet-300' : ''}`}
+            title={
+              voiceOn
+                ? 'Turn off spoken commentary'
+                : 'Live voice commentary — the analyst speaks the play aloud (applies to the next game)'
+            }
+          >
+            <span>🎙️</span>
+            <span>Voice</span>
+          </button>
+        )}
 
         <button onClick={onOpenHistory} className="text-xs hover:text-zinc-200" title="Browse past games">
           ⏱ History

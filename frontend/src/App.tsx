@@ -19,6 +19,7 @@ import PlaybackControls from './components/PlaybackControls'
 import { abortGame, createGame, fetchModels, streamGame, type FreeModel } from './api/ws'
 import { START_FEN, lastMoveSquares, useGameStore, type Color, type MoveRow } from './state/gameStore'
 import { useSounds } from './hooks/useSounds'
+import { useVoiceCommentary } from './hooks/useVoiceCommentary'
 
 function gameIdFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get('game')
@@ -48,6 +49,7 @@ export default function App() {
   const [chaos, setChaos] = useState(false)
   const [commentary, setCommentary] = useState(false)
   const [soundOn, setSoundOn] = useState(true)
+  const [voiceOn, setVoiceOn] = useState(false)
   const [mode, setMode] = useState<string | null>(null)
   const [requestBudget, setRequestBudget] = useState(250)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -62,6 +64,8 @@ export default function App() {
 
   const store = useGameStore()
   const playSound = useSounds(soundOn)
+  // Speaks the opener, move reactions, analyst lines, and the finale aloud.
+  const { supported: voiceSupported } = useVoiceCommentary(voiceOn)
 
   // Config + model list on load.
   useEffect(() => {
@@ -136,7 +140,8 @@ export default function App() {
         moveDelayMs: speedMs,
         illegalRate: chaos ? 0.6 : 0,
         forfeitRate: chaos ? 0.15 : 0,
-        commentaryEveryNMoves: commentary ? 6 : 0,
+        // Voice needs analyst lines to read, so it turns commentary on too.
+        commentaryEveryNMoves: commentary || voiceOn ? 6 : 0,
       })
       useGameStore.getState().startNewGame(created.game_id)
       putGameIdInUrl(created.game_id)
@@ -147,7 +152,7 @@ export default function App() {
     } finally {
       setBusy(false)
     }
-  }, [whiteModel, blackModel, analystModel, speedMs, chaos, commentary])
+  }, [whiteModel, blackModel, analystModel, speedMs, chaos, commentary, voiceOn])
 
   const [aborting, setAborting] = useState(false)
   const handleAbort = useCallback(async () => {
@@ -221,6 +226,9 @@ export default function App() {
           onCommentaryChange={setCommentary}
           soundOn={soundOn}
           onSoundChange={setSoundOn}
+          voiceOn={voiceOn}
+          onVoiceChange={setVoiceOn}
+          voiceSupported={voiceSupported}
           onOpenHistory={() => setHistoryOpen(true)}
           models={models}
           whiteModel={whiteModel}

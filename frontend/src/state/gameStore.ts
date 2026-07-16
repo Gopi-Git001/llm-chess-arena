@@ -42,7 +42,9 @@ export type MoveRow = {
   attempts: number
   forfeited: boolean
   isCheck: boolean
+  isCheckmate: boolean
   isCapture: boolean
+  capturedPiece: string | null // lowercase letter, e.g. "q"
 }
 
 export type Toast = { id: number; message: string; tone: 'warn' | 'error' }
@@ -123,7 +125,9 @@ function rowFromEvent(data: MoveMadeData): MoveRow {
     attempts: data.attempts,
     forfeited: data.forfeited,
     isCheck: data.is_check,
+    isCheckmate: data.is_checkmate,
     isCapture: data.is_capture,
+    capturedPiece: data.captured_piece,
   }
 }
 
@@ -139,7 +143,10 @@ function rowFromStored(move: StoredMove): MoveRow {
     attempts: move.attempts,
     forfeited: Boolean(move.forfeited),
     isCheck: Boolean(move.is_check),
+    // Stored rows don't carry a mate flag; the SAN's trailing # is authoritative.
+    isCheckmate: move.san.includes('#'),
     isCapture: Boolean(move.is_capture),
+    capturedPiece: move.captured_piece,
   }
 }
 
