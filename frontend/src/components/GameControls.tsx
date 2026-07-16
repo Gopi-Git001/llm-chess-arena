@@ -26,8 +26,6 @@ type GameControlsProps = {
   onCommentaryChange: (on: boolean) => void
   soundOn: boolean
   onSoundChange: (on: boolean) => void
-  voiceOn: boolean
-  onVoiceChange: (on: boolean) => void
   voiceSupported: boolean
   onOpenHistory: () => void
   models: FreeModel[]
@@ -109,8 +107,6 @@ export default function GameControls(props: GameControlsProps) {
     onCommentaryChange,
     soundOn,
     onSoundChange,
-    voiceOn,
-    onVoiceChange,
     voiceSupported,
     onOpenHistory,
     models,
@@ -192,10 +188,14 @@ export default function GameControls(props: GameControlsProps) {
 
         <label
           className="flex items-center gap-1.5"
-          title="Live commentary every 6 plies. One extra request per comment in live mode."
+          title={
+            voiceSupported
+              ? 'Spoken play-by-play — the analyst commentates out loud (and in the text feed). Applies to the next game; turn your volume up.'
+              : 'Live text commentary every few moves. Applies to the next game.'
+          }
         >
           <input type="checkbox" checked={commentary} onChange={(e) => onCommentaryChange(e.target.checked)} className="accent-violet-500" />
-          <span className="text-xs">Commentary</span>
+          <span className="text-xs">{voiceSupported ? '🎙️ Commentary' : 'Commentary'}</span>
         </label>
 
         <button
@@ -206,21 +206,6 @@ export default function GameControls(props: GameControlsProps) {
           <span>{soundOn ? '🔊' : '🔇'}</span>
           <span>Sound</span>
         </button>
-
-        {voiceSupported && (
-          <button
-            onClick={() => onVoiceChange(!voiceOn)}
-            className={`flex items-center gap-1 text-xs hover:text-zinc-200 ${voiceOn ? 'text-violet-300' : ''}`}
-            title={
-              voiceOn
-                ? 'Turn off spoken commentary'
-                : 'Live voice commentary — the analyst speaks the play aloud (applies to the next game)'
-            }
-          >
-            <span>🎙️</span>
-            <span>Voice</span>
-          </button>
-        )}
 
         <button onClick={onOpenHistory} className="text-xs hover:text-zinc-200" title="Browse past games">
           ⏱ History

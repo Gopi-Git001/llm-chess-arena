@@ -53,10 +53,16 @@ export function useVoice(enabled: boolean) {
       if (!enabled || !SUPPORTED || !text.trim()) return
       try {
         const synth = window.speechSynthesis
-        if (opts.priority === 'high') synth.cancel()
-        // If a long backlog has built up (slow speech vs fast moves), drop it so
-        // the commentary stays roughly in sync with the board.
-        if (synth.speaking && synth.pending) synth.cancel()
+        if (opts.priority === 'high') {
+          // Big moments (opener, mate, forfeit, finale) cut in immediately.
+          synth.cancel()
+        } else if (synth.speaking || synth.pending) {
+          // Otherwise, if the commentator is still talking, skip this line
+          // rather than queue it. This keeps the voice in sync with the board
+          // and listenable at every speed — no backlog, no clipped words. At
+          // Slow/Watchable there's usually a gap, so most lines still play.
+          return
+        }
 
         const u = new SpeechSynthesisUtterance(text)
         if (voiceRef.current) u.voice = voiceRef.current

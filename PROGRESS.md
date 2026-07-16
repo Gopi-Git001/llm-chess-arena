@@ -35,6 +35,15 @@ offline, no API cost, in keeping with mock mode. New **🎙️ Voice** toggle.
 
 No backend changes; reuses existing COMMENTARY events + client-side reactions.
 
+**Follow-up (same day):** the split "Commentary" (text) vs "Voice" toggles
+confused the user — they turned on Commentary and expected voice. **Merged into
+one 🎙️ Commentary toggle** that does both text + speech; removed the separate
+Voice toggle. Reworked pacing so it's listenable at every speed: normal lines
+are *skipped* when the voice is still talking (no backlog, no clipped words),
+big moments (opener/mate/forfeit/finale) interrupt. Added light filler remarks
+on quiet moves so slower speeds don't go silent. Verified at Slow (≈a line every
+3s) and Watchable.
+
 ---
 
 ## POST-PHASE-5 — Abort fix + Reset button (2026-07-16)

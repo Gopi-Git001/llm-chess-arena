@@ -50,6 +50,21 @@ const FORFEITS = [
 
 const PROMOTIONS = ['Promotion! A new queen joins the fight!', '{color} promotes — say hello to a fresh piece!']
 
+// Low-key remarks for quiet stretches, so the commentary keeps flowing at
+// slower speeds. Spoken only when the engine is free, so they never pile up.
+const FILLER = [
+  '{color} shifts a piece.',
+  '{color} bides their time.',
+  'A calm move from {color}.',
+  '{color} maneuvers on the {side}.',
+  'The tension is building.',
+  '{color} is thinking positionally, or so we assume.',
+  'Both sides jockeying for position.',
+  '{color} keeps it steady.',
+  'No fireworks yet — but the board is alive.',
+  '{color} nudges things forward.',
+]
+
 const WIN_SHOUTS = ['Ohhhh!', 'Wow!', 'Incredible!', 'What a game!', 'Unbelievable!', 'Yes!']
 
 const DRAWS = [
@@ -81,6 +96,13 @@ export type Reaction = { text: string; priority: 'high' | 'normal' }
 
 export function openerLine(): string {
   return pick(OPENERS)
+}
+
+/** A light remark for a quiet move — keeps the commentary flowing in the gaps. */
+export function fillerLine(move: MoveRow): string {
+  const color = move.color === 'white' ? 'White' : 'Black'
+  const side = move.uci[0] <= 'd' ? 'queenside' : 'kingside'
+  return fill(pick(FILLER), { color, side })
 }
 
 /**

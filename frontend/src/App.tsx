@@ -47,9 +47,10 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [speedMs, setSpeedMs] = useState(800)
   const [chaos, setChaos] = useState(false)
+  // One "Commentary" control now covers both the text feed and the spoken
+  // voice — turning it on gives you the play-by-play out loud.
   const [commentary, setCommentary] = useState(false)
   const [soundOn, setSoundOn] = useState(true)
-  const [voiceOn, setVoiceOn] = useState(false)
   const [mode, setMode] = useState<string | null>(null)
   const [requestBudget, setRequestBudget] = useState(250)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -64,8 +65,9 @@ export default function App() {
 
   const store = useGameStore()
   const playSound = useSounds(soundOn)
-  // Speaks the opener, move reactions, analyst lines, and the finale aloud.
-  const { supported: voiceSupported } = useVoiceCommentary(voiceOn)
+  // Speaks the opener, move reactions, analyst lines, and the finale aloud
+  // whenever commentary is on.
+  const { supported: voiceSupported } = useVoiceCommentary(commentary)
 
   // Config + model list on load.
   useEffect(() => {
@@ -140,8 +142,7 @@ export default function App() {
         moveDelayMs: speedMs,
         illegalRate: chaos ? 0.6 : 0,
         forfeitRate: chaos ? 0.15 : 0,
-        // Voice needs analyst lines to read, so it turns commentary on too.
-        commentaryEveryNMoves: commentary || voiceOn ? 6 : 0,
+        commentaryEveryNMoves: commentary ? 6 : 0,
       })
       useGameStore.getState().startNewGame(created.game_id)
       putGameIdInUrl(created.game_id)
@@ -152,7 +153,7 @@ export default function App() {
     } finally {
       setBusy(false)
     }
-  }, [whiteModel, blackModel, analystModel, speedMs, chaos, commentary, voiceOn])
+  }, [whiteModel, blackModel, analystModel, speedMs, chaos, commentary])
 
   const [aborting, setAborting] = useState(false)
   const handleAbort = useCallback(async () => {
@@ -226,8 +227,6 @@ export default function App() {
           onCommentaryChange={setCommentary}
           soundOn={soundOn}
           onSoundChange={setSoundOn}
-          voiceOn={voiceOn}
-          onVoiceChange={setVoiceOn}
           voiceSupported={voiceSupported}
           onOpenHistory={() => setHistoryOpen(true)}
           models={models}

@@ -9,7 +9,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useGameStore } from '../state/gameStore'
-import { finaleLine, openerLine, reactionForMove } from '../lib/commentary'
+import { fillerLine, finaleLine, openerLine, reactionForMove } from '../lib/commentary'
 import { useVoice } from './useVoice'
 
 export function useVoiceCommentary(enabled: boolean) {
@@ -56,7 +56,13 @@ export function useVoiceCommentary(enabled: boolean) {
     }
     if (last.ply === lastPlyRef.current + 1) {
       const reaction = reactionForMove(last)
-      if (reaction) speak(reaction.text, { priority: reaction.priority })
+      if (reaction) {
+        speak(reaction.text, { priority: reaction.priority })
+      } else if (Math.random() < 0.4) {
+        // Quiet move: sometimes drop in a filler remark so the commentary keeps
+        // flowing. Normal priority means it's skipped if the voice is still busy.
+        speak(fillerLine(last))
+      }
     }
     lastPlyRef.current = last.ply
   }, [moves, enabled, speak])
