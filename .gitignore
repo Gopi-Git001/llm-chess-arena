@@ -12,8 +12,10 @@ venv/
 .ruff_cache/
 *.egg-info/
 
-# Data
+# Data (incl. SQLite WAL/SHM sidecars — these don't match *.db)
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 
