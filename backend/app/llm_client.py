@@ -8,6 +8,7 @@ per-game kill-switch both depend on that number being honest.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -28,6 +29,33 @@ SERVER_ERROR_BACKOFF_S = (2, 5)
 EventHook = Callable[[str, dict[str, Any]], None]
 SleepFn = Callable[[float], Awaitable[None]]
 ClockFn = Callable[[], float]
+# Receives each streamed content delta as it arrives (Feature 1 live thinking).
+TokenSink = Callable[[str], None]
+
+
+def sse_delta(line: str) -> str | None:
+    """Pull the content delta out of one OpenRouter SSE line, or None.
+
+    OpenRouter streams OpenAI-style Server-Sent Events: `data: {json}` lines,
+    keep-alive comments, and a final `data: [DONE]`. Pure so the assembler is
+    unit-testable without a socket.
+    """
+    line = line.strip()
+    if not line or not line.startswith("data:"):
+        return None
+    payload = line[len("data:") :].strip()
+    if not payload or payload == "[DONE]":
+        return None
+    try:
+        obj = json.loads(payload)
+    except ValueError:
+        return None
+    choices = obj.get("choices") or []
+    if not choices:
+        return None
+    delta = choices[0].get("delta") or {}
+    content = delta.get("content")
+    return content if isinstance(content, str) and content else None
 
 
 class LLMError(RuntimeError):
@@ -162,11 +190,19 @@ class OpenRouterClient:
         max_tokens: int = 300,
         temperature: float = 0.7,
         json_object: bool = True,
+        token_sink: TokenSink | None = None,
     ) -> LLMResponse:
         """One completion, with the §8 retry ladder applied.
 
+        When `token_sink` is given the request is streamed (`stream: true`) and
+        each content delta is forwarded to the sink as it arrives — this is the
+        only difference between "Too Slow" live thinking and an ordinary move.
+        The assembled content is returned as the same `LLMResponse` either way,
+        so move parsing/validation/retry downstream is byte-for-byte identical.
+
         Raises LLMError subclasses; callers decide whether that costs a retry.
         """
+        stream = token_sink is not None
         active_model = model
         tried_fallback = False
         rate_limit_attempt = 0
@@ -179,6 +215,8 @@ class OpenRouterClient:
                 "max_tokens": max_tokens,
                 "temperature": temperature,
             }
+            if stream:
+                payload["stream"] = True
             if json_object:
                 # Honoured by models that support it; harmless on those that
                 # don't, which is why parsing stays defensive regardless (§7).
@@ -188,13 +226,17 @@ class OpenRouterClient:
             self._requests_used += 1
 
             try:
-                response = await self._client.post("/chat/completions", json=payload)
+                if stream:
+                    status, response, streamed = await self._request_stream(
+                        payload, active_model, token_sink
+                    )
+                else:
+                    response = await self._client.post("/chat/completions", json=payload)
+                    status, streamed = response.status_code, None
             except httpx.TimeoutException as exc:
                 raise LLMError(f"request to {active_model} timed out") from exc
             except httpx.HTTPError as exc:
                 raise LLMError(f"request to {active_model} failed: {exc}") from exc
-
-            status = response.status_code
 
             if status == 429:
                 if rate_limit_attempt >= len(RATE_LIMIT_BACKOFF_S):
@@ -253,7 +295,36 @@ class OpenRouterClient:
             if status != 200:
                 raise LLMError(f"{active_model} returned {status}: {response.text[:200]}")
 
+            if stream:
+                return self._parse_stream(streamed or "", active_model)
             return self._parse_response(response, active_model)
+
+    async def _request_stream(
+        self, payload: dict[str, Any], model: str, token_sink: TokenSink
+    ) -> tuple[int, httpx.Response, str | None]:
+        """Run one streaming attempt. On 200, consume the SSE body, forwarding
+        each delta to `token_sink`, and return the assembled content. On any
+        other status, read the body so the ladder can inspect/report it."""
+        async with self._client.stream("POST", "/chat/completions", json=payload) as response:
+            if response.status_code != 200:
+                await response.aread()
+                return response.status_code, response, None
+            parts: list[str] = []
+            async for line in response.aiter_lines():
+                delta = sse_delta(line)
+                if delta:
+                    parts.append(delta)
+                    try:
+                        token_sink(delta)
+                    except Exception:  # a UI hiccup must never abort the stream
+                        log.exception("token_sink raised on a streamed delta")
+            return 200, response, "".join(parts)
+
+    def _parse_stream(self, content: str, model: str) -> LLMResponse:
+        if not content or not content.strip():
+            # Same empty-content guard as the non-streaming path (§8).
+            raise EmptyResponseError(f"{model} streamed empty content")
+        return LLMResponse(content=content, model=model, usage={})
 
     def _parse_response(self, response: httpx.Response, model: str) -> LLMResponse:
         try:

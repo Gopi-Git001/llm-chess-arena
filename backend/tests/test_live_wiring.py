@@ -327,7 +327,13 @@ class TestManagerLiveWiring:
             lambda cfg, on_event=None: build_client(cfg, obedient_model, on_event=on_event),
         )
         manager = GameManager(store, live_settings)
-        session = manager.create(game_settings=GameSettings(max_moves=4, move_delay_ms=0))
+        # Isolate the player-move quota: move commentary (F2) is a separate,
+        # opt-outable request per move and is exercised in its own tests.
+        session = manager.create(
+            game_settings=GameSettings(
+                max_moves=4, move_delay_ms=0, move_commentary_enabled=False
+            )
+        )
         summary = await session.orchestrator.run()
 
         assert summary["requests_used"] == 4

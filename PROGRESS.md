@@ -13,6 +13,142 @@ Session log. Append after every phase. At the start of every session: re-read
 
 ---
 
+## POST-PHASE-5 — "Too Slow" live thinking + synced voice commentary (2026-07-18)
+
+Two features, both built end-to-end and **verified in mock mode in-browser**
+(zero API calls). Live testing deliberately NOT run — awaiting explicit approval.
+
+### Feature 1 — "Too Slow" speed mode (10s/move, live streaming reasoning)
+
+- **`app/thinking.py`** (new) — the pacing core. `ReasoningBuffer` turns streamed
+  chunks into whole words (buffering an incomplete trailing fragment across
+  deltas); `release_count()` is a pure, unit-tested function deciding how many
+  words to reveal per tick (finished-early → spread the remainder across the
+  leftover ticks; still-producing → trickle); `pace_window()` runs the reveal for
+  exactly the window with injectable clock/sleep.
+- **`app/llm_client.py`** — `complete(..., token_sink=…)` now streams (`stream:
+  true`, SSE) when a sink is given, forwarding each delta and returning the *same*
+  `LLMResponse`. The 429/404/5xx ladder is unchanged; only the 200 branch reads
+  SSE. `sse_delta()` is a pure, tested assembler. A sink that throws never aborts
+  the stream.
+- **`app/agents/player.py`** — `MockPlayer` streams a canned multi-sentence
+  monologue word by word (offline-testable); `PlayerAgent` streams and uses a
+  reasoning-first prompt variant. **Move parse/validate/retry is byte-for-byte
+  unchanged** — streaming is presentation only.
+- **`app/orchestrator.py`** — in "Too Slow" mode a turn spawns `get_move` and runs
+  `pace_window` concurrently; `MOVE_MADE` (carrying the full `thinking` text)
+  fires only after the window closes. New `AGENT_THINKING_TOKEN` events. The plain
+  `move_delay` is skipped (the window paces).
+- **`app/store.py`** — additive `moves.thinking` column (with an `ALTER TABLE`
+  migration for pre-existing DBs) so "click a move → see its reasoning" survives
+  a refresh.
+- Frontend: `ThinkingPanel` (streaming typewriter + blinking cursor + auto-scroll)
+  beside each agent card; store buffers `thinkingText` per colour; a "Too Slow"
+  speed option; clicking a past move shows its stored reasoning.
+
+### Feature 2 — voice commentary synced to the board (presentation queue)
+
+- **`app/agents/commentator.py`** (new) — `template_move_commentary()` (pure,
+  engine-fact fallback, "Knight takes on f6 — and that's check!"), `MockCommentator`
+  (always template, zero calls), `CommentatorAgent` (real LLM, falls back to the
+  template on any `LLMError`/empty reply). `commentator_model` reuses the shared
+  client/throttle/budget.
+- **`app/orchestrator.py`** — after each `MOVE_MADE`, emits `MOVE_COMMENTARY
+  {ply, …, source}` (gated by `commentary.enabled` / `every_n_moves`). The game
+  loop may run ahead of presentation.
+- Frontend: **`lib/presentationQueue.ts`** (new, framework-free) consumes items
+  strictly one at a time — animate → speak → await the utterance's `end` →
+  advance. The board is driven by this queue, never by raw `MOVE_MADE`.
+  **`lib/tts.ts`** `TTSService` wraps `speechSynthesis`: `speak()` resolves on the
+  real `end` event, a chain serialises utterances (no overlap), voice/rate/pitch,
+  and a mute that keeps captions pacing (a guard timer covers browsers that drop
+  `end`). `usePresentation` drives it and fast-forwards past history on rehydration.
+  `AnalystPanel` shows the caption feed with the spoken line highlighted.
+- The two features compose: in "Too Slow" mode each move is a 10s thinking window
+  → move animates → commentary speaks → next window.
+
+### Tests — all green
+
+- Backend **368 passed** (was 329, network blocked): `test_thinking.py` (buffer +
+  `release_count` + `pace_window` finish-early/cut-at-deadline), `test_streaming.py`
+  (SSE assembler + streamed `complete` + sink-throws), `test_commentator.py`
+  (template cases + agent fallback), plus orchestrator thinking-mode + commentary
+  ordering tests. One pre-existing live-wiring quota test updated to disable move
+  commentary so it still isolates the player-move count.
+- Frontend: **`presentationQueue.test.ts`** (4 passed, `node --test`) pins the core
+  guarantee — the board never advances before the speech-finished callback fires;
+  late commentary is waited for; no-commentary/finish paths don't stall. `tsc -b`,
+  `vite build`, `oxlint` all clean.
+
+### ✅ Mock-mode browser verification (2026-07-18)
+
+Backend + Vite running mock. Measured, not eyeballed:
+- **F1 streaming**: the White Thinking panel grew live 260 → 295 chars over the
+  window then cleared on commit; the "live" label + blinking cursor showed; moves
+  landed (h4, Nf6, a4…). Clicking move 1 revealed its stored reasoning labelled
+  "move 1".
+- **F2 gating** (Watchable, commentary on, voice muted): board `presented` ply
+  advanced 1,1,1,2,2,3,3,4,4,4 while the backend `emitted` ply raced 2,3,4,5,7,8,
+  9,10,11,13 — `speaking` always equalled `presented`. **The board never got
+  ahead of the voice**, and the loop ran up to 9 plies ahead. Captions rendered in
+  order matching the moves ("White pushes a pawn to e4." …), the speaking line
+  highlighted, mute kept captions running.
+- **Refresh-proof**: a full reload rehydrated 78 moves + 78 captions from REST, in
+  order. **Zero console errors** throughout.
+
+TTS note: this browser has 22 voices but never fires the utterance `end` event
+(a known automation quirk) — the `TTSService` guard timer and muted caption
+pacing both cover it, and on a normal browser `end` drives the pacing. Audio
+itself could not be heard in this environment, only the `speak()` calls observed.
+
+Removed the now-superseded client-side voice hooks (`useVoice.ts`,
+`useVoiceCommentary.ts`, `lib/commentary.ts`) — replaced by the TTSService +
+presentation queue; nothing else imported them.
+
+### LIVE RUN — 2026-07-18 (user approved "run live")
+
+One small live game via `scripts/run_live_game.py` (new): `MODE=live` scoped in the
+script's env, config.yaml stayed `mock`. `--max-moves 4`, 8s thinking window,
+commentary on. Preflight (`verify_models.py`, now also checking `commentator_model`)
+was green — all five models live+free.
+
+**Result:** `1/2-1/2` by `max_moves`, 4 plies, **28 requests**, PGN
+`1. Nf3 c6 2. Rg1 g5`. Wall-clock >10 min — the account's per-minute limit is as
+brutal as the 2026-07-16 run documented.
+
+**What the live run proved for the two new features:**
+- ✅ **F1 streaming works live.** White (`gpt-oss-20b:free`) move 1 `Nf3` streamed
+  its reasoning over `AGENT_THINKING_TOKEN` events (91 chars assembled: "Develops
+  knight, controls center, follows opening principles"). The real streaming path —
+  `stream:true` SSE → forwarded deltas → same parse/validate — ran end to end.
+- ✅ **F2 never goes silent.** The commentator (`qwen3-coder:free`) was 429'd on
+  *every* call, and every move still got commentary via the template fallback
+  ("White brings the knight to f3." …). The voice never dropped.
+- The 429 ladder, forfeit handoff, streaming, and commentary all interoperated
+  under real load. Black was rate-limited to death (forfeited both turns); White
+  landed move 1 then proposed 3 illegals on move 2 → forfeit. The analyst verdict
+  was a template fallback (rate-limited), honestly labelled and saying so.
+
+**Bug found by the live run and fixed:** `MOVE_COMMENTARY.source` was labelled
+`"model"` even when the commentator had fallen back to the template (rate-limited)
+— the label lied. `comment_move` now returns a `CommentaryResult(text, source)`
+reporting the *true* source per line; the orchestrator emits that. Regression
+tests pin it (`source == "template"` on a 500/empty reply, `"model"` on a real
+answer). Full suite **368 passed**.
+
+**What a live run still hasn't shown** (same blocker as before): a *model-authored*
+commentator line and a model-authored verdict — the per-minute limit 429s them
+before they land. The plumbing is proven; only a looser tier (or a quiet bucket)
+will land a model-authored line.
+
+### Next step
+
+Both features are complete, mock-verified in-browser, and live-verified for
+plumbing + fallbacks. Open items are tier-limited, not code: landing a
+model-authored commentator/verdict line needs a looser rate limit.
+
+---
+
 ## POST-PHASE-5 — Live voice commentary (2026-07-16)
 
 Spoken commentary via the browser's Web Speech API (`speechSynthesis`) — free,

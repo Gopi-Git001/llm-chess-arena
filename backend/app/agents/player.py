@@ -6,10 +6,11 @@ be built and tested without spending a single API request (PLAN.md §2.6).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 
-from app.agents.base import BasePlayer, MoveProposal
+from app.agents.base import BasePlayer, MoveProposal, TokenSink
 from app.llm_client import EmptyResponseError, LLMError, OpenRouterClient
 from app.parsing import ParseError, parse_move_response
 from app.prompts import (
@@ -33,6 +34,28 @@ CANNED_REASONING = [
     "Prophylaxis: stopping an idea my opponent had not yet had.",
     "Applying pressure and trusting the position to reward me.",
     "Solid, flexible, and entirely defensible in the post-game interview.",
+]
+
+# Multi-sentence "thinking out loud" for mock "Too Slow" mode — streamed word by
+# word so the live-thinking panel has something to type out (Feature 1). Zero
+# API cost, same as everything else in mock mode (§2.6).
+CANNED_THINKING = [
+    "Let me weigh my options here. The centre feels like the natural battleground, "
+    "so I want a move that fights for it without overextending. I'm also keeping an "
+    "eye on my king's safety before I commit to anything sharp. Developing a piece "
+    "toward the middle looks principled, so that's the direction I'll take.",
+    "First, the threats. Nothing is hanging that I can see, which means I get a free "
+    "moment to improve my position. My worst piece is the one sitting passive on the "
+    "back rank, so activating it appeals to me. I'll balance activity against leaving "
+    "any weaknesses, and land on the calm, flexible choice.",
+    "There's a temptation to go aggressive and force matters right away. But rushing "
+    "usually backfires against a solid defence, so I'll hold that idea in reserve. "
+    "Instead I want to build up slowly, keep my structure intact, and ask my opponent "
+    "a quiet question they may not answer well. Patience it is.",
+    "I'm counting material and it's level, so this is about position, not tactics. "
+    "Space matters here — grabbing a little more of the board makes every future plan "
+    "easier. I don't want to create holes I can't defend, though. A restrained, "
+    "space-gaining move threads that needle nicely.",
 ]
 
 
@@ -64,9 +87,19 @@ class MockPlayer(BasePlayer):
         move_history_san: list[str],
         move_number: int,
         retry_budget: int = 3,
+        token_sink: TokenSink | None = None,
     ) -> MoveProposal:
         if not legal_moves:
             raise ValueError("get_move called with no legal moves — game is over")
+
+        # "Too Slow" mode: stream a canned chess-talk monologue word by word so
+        # the live-thinking panel is testable offline (Feature 1). The pacer
+        # controls how fast it's *revealed*; here we just produce the tokens.
+        if token_sink is not None:
+            monologue = self._rng.choice(CANNED_THINKING)
+            for word in monologue.split(" "):
+                token_sink(word + " ")
+                await asyncio.sleep(0)  # yield so the pacer can interleave
 
         illegal_attempts: list[str] = []
 
@@ -149,11 +182,16 @@ class PlayerAgent(BasePlayer):
         move_history_san: list[str],
         move_number: int,
         retry_budget: int = 3,
+        token_sink: TokenSink | None = None,
     ) -> MoveProposal:
         if not legal_moves:
             raise ValueError("get_move called with no legal moves — game is over")
 
-        system = build_player_system(self.model, self.color)
+        # In "Too Slow" mode we stream and ask for reasoning-first output. The
+        # parse/validate/retry loop below is otherwise identical — streaming is
+        # only how the reasoning reaches the viewer, never a game rule (§F1).
+        thinking = token_sink is not None
+        system = build_player_system(self.model, self.color, thinking=thinking)
         rejected: list[str] = []
         feedback = ""
         last_bad = NO_MOVE
@@ -177,6 +215,7 @@ class PlayerAgent(BasePlayer):
                     ],
                     max_tokens=self.max_tokens,
                     temperature=self.temperature,
+                    token_sink=token_sink,
                 )
                 parsed = parse_move_response(response.content)
 

@@ -24,6 +24,8 @@ type GameControlsProps = {
   onChaosChange: (chaos: boolean) => void
   commentary: boolean
   onCommentaryChange: (on: boolean) => void
+  voiceMuted: boolean
+  onVoiceMutedChange: (muted: boolean) => void
   soundOn: boolean
   onSoundChange: (on: boolean) => void
   voiceSupported: boolean
@@ -41,10 +43,15 @@ type GameControlsProps = {
   mode: string | null
 }
 
+// ms < 0 is the "Too Slow" sentinel: a fixed live-thinking window per move
+// rather than a plain delay (Feature 1).
+export const TOO_SLOW_MS = -1
+
 const SPEEDS = [
   { label: 'Fast', ms: 150 },
   { label: 'Watchable', ms: 800 },
   { label: 'Slow', ms: 2000 },
+  { label: 'Too Slow', ms: TOO_SLOW_MS },
 ]
 
 const CONNECTION_TONE: Record<string, string> = {
@@ -105,6 +112,8 @@ export default function GameControls(props: GameControlsProps) {
     onChaosChange,
     commentary,
     onCommentaryChange,
+    voiceMuted,
+    onVoiceMutedChange,
     soundOn,
     onSoundChange,
     voiceSupported,
@@ -197,6 +206,17 @@ export default function GameControls(props: GameControlsProps) {
           <input type="checkbox" checked={commentary} onChange={(e) => onCommentaryChange(e.target.checked)} className="accent-violet-500" />
           <span className="text-xs">{voiceSupported ? '🎙️ Commentary' : 'Commentary'}</span>
         </label>
+
+        {commentary && voiceSupported && (
+          <button
+            onClick={() => onVoiceMutedChange(!voiceMuted)}
+            className="flex items-center gap-1 text-xs hover:text-zinc-200"
+            title={voiceMuted ? 'Unmute the commentator (captions keep running either way)' : 'Mute the voice — captions keep running'}
+          >
+            <span>{voiceMuted ? '🔇' : '🗣️'}</span>
+            <span>{voiceMuted ? 'Voice muted' : 'Voice on'}</span>
+          </button>
+        )}
 
         <button
           onClick={() => onSoundChange(!soundOn)}

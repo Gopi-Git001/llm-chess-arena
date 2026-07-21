@@ -7,10 +7,12 @@ openrouter:
   white_model: openai/gpt-oss-20b:free
   black_model: meta-llama/llama-3.3-70b-instruct:free
   analyst_model: qwen/qwen3-coder:free
+  commentator_model: qwen/qwen3-coder:free   # live move commentary (Feature 2)
   fallback_model: openrouter/free
   request_timeout_s: 60
   max_tokens_move: 300
   max_tokens_analysis: 1500
+  max_tokens_commentary: 120         # one or two spoken sentences per move
 
 throttle:
   min_seconds_between_requests: 4    # 15/min, safely under the 20/min cap
@@ -21,6 +23,14 @@ game:
   illegal_move_retries: 3            # then random legal move fallback
   live_commentary_every_n_moves: 0   # 0 = off (saves quota); 5 = chatty mode
   move_delay_ui_ms: 800              # min pacing so the UI feels watchable
+  too_slow_window_ms: 10000          # "Too Slow" per-move live-thinking window
+
+# Voice/move commentary synced to the board (Feature 2). One extra LLM call per
+# commented move in live mode; template fallback keeps the voice from going
+# silent, and mock mode always uses templates (zero calls).
+commentary:
+  enabled: true
+  every_n_moves: 1
 
 # mock = zero API calls (MockPlayer/MockAnalyst). live = real OpenRouter calls.
 # Default is mock per the project's working rules; switch to live only for an

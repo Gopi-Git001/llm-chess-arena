@@ -8,6 +8,7 @@
 import { create } from 'zustand'
 import type {
   AgentThinkingData,
+  AgentThinkingTokenData,
   Color,
   CommentaryData,
   ErrorData,
@@ -17,6 +18,7 @@ import type {
   GameStartedData,
   GameStatus,
   IllegalAttemptData,
+  MoveCommentaryData,
   MoveForfeitedData,
   MoveMadeData,
   RateLimitedData,
@@ -39,6 +41,9 @@ export type MoveRow = {
   san: string
   fen: string
   reasoning: string
+  // Full streamed reasoning in "Too Slow" mode; '' otherwise. Shown when a move
+  // is clicked in the move list (Feature 1).
+  thinking: string
   attempts: number
   forfeited: boolean
   isCheck: boolean
@@ -46,6 +51,9 @@ export type MoveRow = {
   isCapture: boolean
   capturedPiece: string | null // lowercase letter, e.g. "q"
 }
+
+/** One spoken commentary caption (Feature 2). */
+export type Caption = { ply: number; text: string; source: 'model' | 'template' }
 
 export type Toast = { id: number; message: string; tone: 'warn' | 'error' }
 
@@ -65,6 +73,8 @@ type GameState = {
   whiteModel: string
   blackModel: string
   thinking: Color | null
+  // Live streamed reasoning per colour during a "Too Slow" window (Feature 1).
+  thinkingText: Record<Color, string>
   result: string | null
   termination: string | null
   winner: Color | null
@@ -73,6 +83,9 @@ type GameState = {
   illegalCounts: Record<Color, number>
   forfeitCounts: Record<Color, number>
   comments: Comment[]
+  // Per-move spoken commentary, keyed by ply, plus an ordered caption feed (F2).
+  commentaries: Record<number, string>
+  captions: Caption[]
   verdict: VerdictData | null
   rateLimit: RateLimit | null
   toasts: Toast[]
@@ -97,6 +110,7 @@ const initialState = {
   whiteModel: '',
   blackModel: '',
   thinking: null,
+  thinkingText: { white: '', black: '' } as Record<Color, string>,
   result: null,
   termination: null,
   winner: null,
@@ -105,6 +119,8 @@ const initialState = {
   illegalCounts: { white: 0, black: 0 },
   forfeitCounts: { white: 0, black: 0 },
   comments: [] as Comment[],
+  commentaries: {} as Record<number, string>,
+  captions: [] as Caption[],
   verdict: null as VerdictData | null,
   rateLimit: null as RateLimit | null,
   toasts: [] as Toast[],
@@ -122,6 +138,7 @@ function rowFromEvent(data: MoveMadeData): MoveRow {
     san: data.san,
     fen: data.fen,
     reasoning: data.reasoning,
+    thinking: data.thinking ?? '',
     attempts: data.attempts,
     forfeited: data.forfeited,
     isCheck: data.is_check,
@@ -140,6 +157,7 @@ function rowFromStored(move: StoredMove): MoveRow {
     san: move.san,
     fen: move.fen_after,
     reasoning: move.reasoning ?? '',
+    thinking: move.thinking ?? '',
     attempts: move.attempts,
     forfeited: Boolean(move.forfeited),
     isCheck: Boolean(move.is_check),
@@ -174,7 +192,23 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
 
       case 'AGENT_THINKING': {
-        set({ thinking: (event.data as unknown as AgentThinkingData).color })
+        const color = (event.data as unknown as AgentThinkingData).color
+        // A fresh turn starts a fresh live-thinking buffer for that side.
+        set((state) => ({
+          thinking: color,
+          thinkingText: { ...state.thinkingText, [color]: '' },
+        }))
+        break
+      }
+
+      case 'AGENT_THINKING_TOKEN': {
+        const data = event.data as unknown as AgentThinkingTokenData
+        set((state) => ({
+          thinkingText: {
+            ...state.thinkingText,
+            [data.color]: state.thinkingText[data.color] + data.text_chunk,
+          },
+        }))
         break
       }
 
@@ -186,9 +220,23 @@ export const useGameStore = create<GameState>((set, get) => ({
           moves: state.moves.some((m) => m.ply === row.ply) ? state.moves : [...state.moves, row],
           fen: data.fen,
           thinking: null,
+          // The live-thinking panel clears when the move commits; the full text
+          // is preserved on the move row for later viewing (Feature 1).
+          thinkingText: { ...state.thinkingText, [data.color]: '' },
           requestsUsed: data.requests_used,
           // A move landing means we're no longer waiting on a rate limit.
           rateLimit: null,
+        }))
+        break
+      }
+
+      case 'MOVE_COMMENTARY': {
+        const data = event.data as unknown as MoveCommentaryData
+        set((state) => ({
+          commentaries: { ...state.commentaries, [data.ply]: data.text },
+          captions: state.captions.some((c) => c.ply === data.ply)
+            ? state.captions
+            : [...state.captions, { ply: data.ply, text: data.text, source: data.source }],
         }))
         break
       }
@@ -292,6 +340,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     const counts = { white: 0, black: 0 }
     const forfeits = { white: 0, black: 0 }
     const comments: Comment[] = []
+    const commentaries: Record<number, string> = {}
+    const captions: Caption[] = []
 
     for (const event of game.events) {
       if (event.type === 'ILLEGAL_ATTEMPT') {
@@ -310,6 +360,11 @@ export const useGameStore = create<GameState>((set, get) => ({
           text: data.text,
           model: data.model,
         })
+      }
+      if (event.type === 'MOVE_COMMENTARY') {
+        const data = event.data as unknown as MoveCommentaryData
+        commentaries[data.ply] = data.text
+        captions.push({ ply: data.ply, text: data.text, source: data.source })
       }
     }
 
@@ -331,10 +386,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       illegalCounts: counts,
       forfeitCounts: forfeits,
       comments,
+      commentaries,
+      captions,
       // REST is authoritative: the verdict survives a refresh (§9).
       verdict: game.verdict,
       rateLimit: null,
       thinking: null,
+      thinkingText: { white: '', black: '' },
       toasts: [],
     })
   },

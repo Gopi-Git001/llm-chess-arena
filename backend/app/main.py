@@ -57,6 +57,11 @@ class GameSettingsIn(BaseModel):
     seed: int | None = None
     # 0 = off. Each comment is an extra request in live mode (§5).
     commentary_every_n_moves: int | None = Field(default=None, ge=0, le=50)
+    # "Too Slow" live-thinking window per move (F1). 0/None = off.
+    thinking_window_ms: int | None = Field(default=None, ge=0, le=60_000)
+    # Voice/move commentary synced to the board (F2).
+    move_commentary_enabled: bool | None = None
+    move_commentary_every_n_moves: int | None = Field(default=None, ge=1, le=50)
     illegal_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     forfeit_rate: float = Field(default=0.0, ge=0.0, le=1.0)
 
@@ -94,6 +99,9 @@ def health() -> dict:
         },
         # The quota meter shows requests-this-game against this kill-switch (§5).
         "max_requests_per_game": settings.throttle.max_requests_per_game,
+        # "Too Slow" window (F1) so the client can request the configured length.
+        "too_slow_window_ms": settings.game.too_slow_window_ms,
+        "commentary_enabled": settings.commentary.enabled,
     }
 
 

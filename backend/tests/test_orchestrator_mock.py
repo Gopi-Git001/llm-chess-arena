@@ -8,6 +8,7 @@ import pytest
 
 from app.agents.analyst import MockAnalyst
 from app.agents.base import BaseAnalyst, BasePlayer, MoveProposal
+from app.agents.commentator import MockCommentator
 from app.engine import ChessEngine
 from app.events import EventType
 from app.orchestrator import GameOrchestrator
@@ -92,6 +93,121 @@ class TestFullMockGame:
         second = build(store, MockPlayer(seed=11, color="white"), MockPlayer(seed=12, color="black"))
 
         assert (await first.run())["pgn"].split("\n\n")[1] == (await second.run())["pgn"].split("\n\n")[1]
+
+
+class TestTooSlowThinkingMode:
+    """Feature 1: a live-thinking window per move, then MOVE_MADE."""
+
+    def _build(self, store, **kwargs):
+        # A short window and a tiny game keep this fast while still exercising
+        # several ticks of the pacer.
+        kwargs.setdefault("thinking_window_ms", 200)
+        kwargs.setdefault("max_moves", 4)
+        return build(
+            store,
+            MockPlayer(seed=1, color="white"),
+            MockPlayer(seed=2, color="black"),
+            **kwargs,
+        )
+
+    async def test_thinking_tokens_stream_then_the_move_lands(self, store):
+        orch = self._build(store)
+        await orch.run()
+
+        history = orch.bus.history
+        tokens = [e for e in history if e.type == EventType.AGENT_THINKING_TOKEN]
+        moves = [e for e in history if e.type == EventType.MOVE_MADE]
+
+        assert tokens, "the thinking panel must receive streamed reasoning tokens"
+        assert moves, "the game must still make moves"
+
+        # For the first move, every one of its thinking tokens is emitted BEFORE
+        # the move commits (the window closes first).
+        first_move = moves[0]
+        first_move_tokens = [
+            e for e in tokens if e.data["move_number"] == 1 and e.data["color"] == "white"
+        ]
+        assert first_move_tokens
+        assert max(e.seq for e in first_move_tokens) < first_move.seq
+
+        # Reassembled tokens form readable reasoning.
+        text = "".join(e.data["text_chunk"] for e in first_move_tokens)
+        assert len(text.split()) > 3
+
+    async def test_full_thinking_text_is_stored_and_on_the_move_event(self, store):
+        orch = self._build(store)
+        await orch.run()
+
+        moves = store.get_moves(orch.game_id)
+        assert all(m["thinking"] for m in moves), "each move keeps its full reasoning"
+
+        move_events = [e for e in orch.bus.history if e.type == EventType.MOVE_MADE]
+        assert all(e.data["thinking"] for e in move_events)
+
+    async def test_window_paces_the_move_no_extra_delay_stacked(self, store):
+        # Two plies at a 200ms window ≈ 0.4s; assert we're in that ballpark, i.e.
+        # the plain move_delay isn't stacked on top of the window.
+        orch = self._build(store, max_moves=2, move_delay_ms=800)
+        started = time.perf_counter()
+        await orch.run()
+        elapsed = time.perf_counter() - started
+        assert elapsed < 1.2, f"window should pace it (~0.4s), got {elapsed:.2f}s"
+
+
+class TestMoveCommentary:
+    """Feature 2: one commentary item per move, paired by ply."""
+
+    async def test_commentary_is_emitted_for_every_move(self, store):
+        orch = build(
+            store,
+            MockPlayer(seed=3, color="white"),
+            MockPlayer(seed=4, color="black"),
+            commentator=MockCommentator(),
+            move_commentary_enabled=True,
+            move_commentary_every_n_moves=1,
+            max_moves=6,
+        )
+        await orch.run()
+
+        moves = [e for e in orch.bus.history if e.type == EventType.MOVE_MADE]
+        comments = [e for e in orch.bus.history if e.type == EventType.MOVE_COMMENTARY]
+
+        assert len(comments) == len(moves)
+        # Each commentary is paired to its move by ply and carries spoken text.
+        assert [c.data["ply"] for c in comments] == [m.data["ply"] for m in moves]
+        assert all(c.data["text"] for c in comments)
+        assert all(c.data["source"] == "template" for c in comments)
+        # The commentary for a move never precedes that move on the wire.
+        for move, comment in zip(moves, comments):
+            assert comment.seq > move.seq
+
+    async def test_commentary_off_by_default_setting_emits_nothing(self, store):
+        orch = build(
+            store,
+            MockPlayer(seed=3, color="white"),
+            MockPlayer(seed=4, color="black"),
+            commentator=MockCommentator(),
+            move_commentary_enabled=False,
+            max_moves=4,
+        )
+        await orch.run()
+        assert not [e for e in orch.bus.history if e.type == EventType.MOVE_COMMENTARY]
+
+    async def test_every_n_moves_throttles_commentary(self, store):
+        orch = build(
+            store,
+            MockPlayer(seed=3, color="white"),
+            MockPlayer(seed=4, color="black"),
+            commentator=MockCommentator(),
+            move_commentary_enabled=True,
+            move_commentary_every_n_moves=2,
+            max_moves=6,
+        )
+        await orch.run()
+        comments = [e for e in orch.bus.history if e.type == EventType.MOVE_COMMENTARY]
+        # Only even plies get commented.
+        assert all(c.data["ply"] % 2 == 0 for c in comments)
+        assert len(comments) == 3
 
 
 class TestEventStream:

@@ -16,6 +16,10 @@ export type NewGameOptions = {
   moveDelayMs?: number
   seed?: number
   commentaryEveryNMoves?: number
+  // "Too Slow" live-thinking window per move (Feature 1). 0 = off.
+  thinkingWindowMs?: number
+  // Voice/move commentary synced to the board (Feature 2).
+  moveCommentaryEnabled?: boolean
   illegalRate?: number
   forfeitRate?: number
 }
@@ -42,6 +46,8 @@ export async function createGame(options: NewGameOptions = {}): Promise<CreateGa
           move_delay_ms: options.moveDelayMs,
           seed: options.seed,
           commentary_every_n_moves: options.commentaryEveryNMoves,
+          thinking_window_ms: options.thinkingWindowMs,
+          move_commentary_enabled: options.moveCommentaryEnabled,
           illegal_rate: options.illegalRate ?? 0,
           forfeit_rate: options.forfeitRate ?? 0,
         },

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS moves (
     san            TEXT NOT NULL,
     fen_after      TEXT NOT NULL,
     reasoning      TEXT,
+    thinking       TEXT,               -- full streamed reasoning ("Too Slow" mode)
     attempts       INTEGER NOT NULL DEFAULT 1,
     forfeited      INTEGER NOT NULL DEFAULT 0,
     is_check       INTEGER NOT NULL DEFAULT 0,
@@ -111,7 +112,16 @@ class GameStore:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Additive migrations for DBs created before a column existed. CREATE
+        TABLE IF NOT EXISTS won't add columns to an existing table, so do it by
+        hand — cheap, and it keeps old game history readable after an upgrade."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(moves)")}
+        if "thinking" not in cols:
+            self._conn.execute("ALTER TABLE moves ADD COLUMN thinking TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -191,12 +201,13 @@ class GameStore:
         reasoning: str | None = None,
         attempts: int = 1,
         forfeited: bool = False,
+        thinking: str | None = None,
     ) -> None:
         self._conn.execute(
             """INSERT INTO moves (game_id, ply, move_number, color, uci, san,
-                                  fen_after, reasoning, attempts, forfeited,
+                                  fen_after, reasoning, thinking, attempts, forfeited,
                                   is_check, is_capture, captured_piece, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 game_id,
                 record.ply,
@@ -206,6 +217,7 @@ class GameStore:
                 record.san,
                 record.fen_after,
                 reasoning,
+                thinking,
                 attempts,
                 int(forfeited),
                 int(record.is_check),

@@ -8,18 +8,57 @@
  */
 
 import { useEffect, useRef } from 'react'
-import type { Comment, RateLimit } from '../state/gameStore'
+import type { Caption, Comment, RateLimit } from '../state/gameStore'
 import type { VerdictData } from '../types/events'
 import VerdictCard from './VerdictCard'
 
 type AnalystPanelProps = {
   comments: Comment[]
+  captions: Caption[]
+  speakingPly: number | null
   verdict: VerdictData | null
   rateLimit: RateLimit | null
   status: string | null
   whiteModel: string
   blackModel: string
   analystModel?: string
+}
+
+/** Live spoken-commentary captions. The line currently being spoken is
+ * highlighted; captions keep running even when the voice is muted (F2f). */
+function CaptionFeed({ captions, speakingPly }: { captions: Caption[]; speakingPly: number | null }) {
+  const endRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [captions.length, speakingPly])
+
+  return (
+    <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+      <h2 className="mb-2 flex items-center gap-1.5 text-xs font-medium tracking-wide text-zinc-400 uppercase">
+        🎙️ Commentary
+        {speakingPly !== null && (
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+        )}
+      </h2>
+      <ul className="max-h-48 space-y-1.5 overflow-y-auto">
+        {captions.map((caption) => {
+          const speaking = caption.ply === speakingPly
+          return (
+            <li
+              key={caption.ply}
+              className={`rounded px-2 py-1 text-xs transition-colors ${
+                speaking ? 'bg-emerald-950/60 text-emerald-200' : 'text-zinc-400'
+              }`}
+            >
+              <span className="mr-1 font-mono text-zinc-600">{Math.ceil(caption.ply / 2)}.</span>
+              {caption.text}
+            </li>
+          )
+        })}
+        <div ref={endRef} />
+      </ul>
+    </section>
+  )
 }
 
 function Waiting({ status }: { status: string | null }) {
@@ -40,6 +79,8 @@ function Waiting({ status }: { status: string | null }) {
 
 export default function AnalystPanel({
   comments,
+  captions,
+  speakingPly,
   verdict,
   rateLimit,
   status,
@@ -66,6 +107,8 @@ export default function AnalystPanel({
           </span>
         </div>
       )}
+
+      {captions.length > 0 && <CaptionFeed captions={captions} speakingPly={speakingPly} />}
 
       {verdict ? (
         <VerdictCard verdict={verdict} whiteModel={whiteModel} blackModel={blackModel} />

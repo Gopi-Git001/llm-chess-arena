@@ -16,6 +16,20 @@ PLAYER_SYSTEM = (
     '{{"move": "<uci from the list>", "reasoning": "<one punchy sentence, max 20 words>"}}'
 )
 
+# "Too Slow" mode: reasoning is streamed to the viewer live, so we ask for it
+# FIRST as plain prose, then the machine-readable move on the final line. The
+# parser digs the JSON object out of the trailing text, so move handling is
+# unchanged — only the presentation differs (Feature 1).
+PLAYER_SYSTEM_THINKING = (
+    "You are {model_name} playing chess as {color} in an AI-vs-AI exhibition match.\n"
+    "You will receive the position and a list of legal moves. You MUST pick your\n"
+    "move ONLY from that list.\n\n"
+    "First think out loud, step by step: a few short sentences weighing candidate\n"
+    "moves, threats, and plans. Then, on the FINAL line only, output STRICT JSON\n"
+    "with your chosen move and nothing after it:\n"
+    '{{"move": "<uci from the list>", "reasoning": "<one punchy sentence, max 20 words>"}}'
+)
+
 PLAYER_USER = (
     "Position (FEN): {fen}\n"
     "You are {color}. Move {move_number}.\n"
@@ -33,8 +47,9 @@ RETRY_FEEDBACK = (
 )
 
 
-def build_player_system(model_name: str, color: str) -> str:
-    return PLAYER_SYSTEM.format(model_name=model_name, color=color)
+def build_player_system(model_name: str, color: str, thinking: bool = False) -> str:
+    template = PLAYER_SYSTEM_THINKING if thinking else PLAYER_SYSTEM
+    return template.format(model_name=model_name, color=color)
 
 
 def build_player_user(
@@ -164,4 +179,57 @@ def build_commentary_user(
         white_model=white_model,
         black_model=black_model,
         recent_moves=" ".join(recent_moves) if recent_moves else "(none)",
+    )
+
+
+# --- move commentator (Feature 2) ----------------------------------------
+#
+# A sports-broadcaster voice reacting to ONE move, spoken aloud in sync with the
+# board. Kept to one or two sentences because it's read out between moves.
+
+COMMENTATOR_SYSTEM = (
+    "You are an energetic live chess commentator for an AI-vs-AI match — think "
+    "excitable sports broadcaster calling the action move by move. Given a single "
+    "move, react to it in ONE or TWO short, punchy spoken sentences. Be vivid and "
+    "specific to THIS move (the piece, the square, captures, checks, threats). "
+    "Plain text only — no JSON, no move lists, no preamble, no emoji."
+)
+
+COMMENTATOR_USER = (
+    "{mover} just played {san}"
+    "{extras}.\n"
+    "The player's own note: {reasoning}\n"
+    "Position now (FEN): {fen}\n"
+    "Call it:"
+)
+
+
+def build_commentator_system() -> str:
+    return COMMENTATOR_SYSTEM
+
+
+def build_commentator_user(
+    *,
+    mover: str,
+    san: str,
+    fen: str,
+    reasoning: str,
+    is_capture: bool,
+    is_check: bool,
+    is_checkmate: bool,
+) -> str:
+    flags = []
+    if is_capture:
+        flags.append("a capture")
+    if is_checkmate:
+        flags.append("checkmate")
+    elif is_check:
+        flags.append("check")
+    extras = f" ({', '.join(flags)})" if flags else ""
+    return COMMENTATOR_USER.format(
+        mover=mover,
+        san=san,
+        extras=extras,
+        reasoning=reasoning or "(none given)",
+        fen=fen,
     )

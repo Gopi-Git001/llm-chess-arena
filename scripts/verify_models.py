@@ -56,6 +56,7 @@ async def main() -> int:
         "white": cfg.white_model,
         "black": cfg.black_model,
         "analyst": cfg.analyst_model,
+        "commentator": cfg.commentator_model,
         "fallback": cfg.fallback_model,
     }
 

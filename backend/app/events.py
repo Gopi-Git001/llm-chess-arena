@@ -19,10 +19,14 @@ class EventType(str, Enum):
 
     GAME_STARTED = "GAME_STARTED"
     AGENT_THINKING = "AGENT_THINKING"
+    # A single reasoning token streamed live during the "Too Slow" window (F1).
+    AGENT_THINKING_TOKEN = "AGENT_THINKING_TOKEN"
     MOVE_MADE = "MOVE_MADE"
     ILLEGAL_ATTEMPT = "ILLEGAL_ATTEMPT"
     MOVE_FORFEITED = "MOVE_FORFEITED"
     COMMENTARY = "COMMENTARY"
+    # One presentation item's spoken commentary, paired to a move by ply (F2).
+    MOVE_COMMENTARY = "MOVE_COMMENTARY"
     GAME_OVER = "GAME_OVER"
     VERDICT = "VERDICT"
     ERROR = "ERROR"

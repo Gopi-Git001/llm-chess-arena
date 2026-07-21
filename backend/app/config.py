@@ -24,10 +24,14 @@ class OpenRouterConfig(BaseModel):
     white_model: str = "openai/gpt-oss-120b:free"
     black_model: str = "meta-llama/llama-3.3-70b-instruct:free"
     analyst_model: str = "qwen/qwen3-coder:free"
+    # The live-commentary voice (Feature 2). Reuses the shared client/throttle.
+    commentator_model: str = "qwen/qwen3-coder:free"
     fallback_model: str = "openrouter/free"
     request_timeout_s: float = 60
     max_tokens_move: int = 300
     max_tokens_analysis: int = 1500
+    # Move commentary is short by design — one or two spoken sentences.
+    max_tokens_commentary: int = 120
 
 
 class ThrottleConfig(BaseModel):
@@ -40,6 +44,20 @@ class GameConfig(BaseModel):
     illegal_move_retries: int = 3
     live_commentary_every_n_moves: int = 0
     move_delay_ui_ms: int = 800
+    # "Too Slow" mode: a fixed per-move thinking window during which the model's
+    # reasoning streams live to the UI (Feature 1). Only used when a game opts in.
+    too_slow_window_ms: int = 10_000
+
+
+class CommentaryConfig(BaseModel):
+    """Voice/move commentary synced to the board (Feature 2).
+
+    One extra LLM call per commented move in live mode, so it's gated and has a
+    template fallback that never goes silent. Mock mode always uses templates.
+    """
+
+    enabled: bool = True
+    every_n_moves: int = 1
 
 
 class Secrets(BaseSettings):
@@ -59,6 +77,7 @@ class Settings(BaseModel):
     openrouter: OpenRouterConfig = Field(default_factory=OpenRouterConfig)
     throttle: ThrottleConfig = Field(default_factory=ThrottleConfig)
     game: GameConfig = Field(default_factory=GameConfig)
+    commentary: CommentaryConfig = Field(default_factory=CommentaryConfig)
     mode: Literal["live", "mock"] = "mock"
     secrets: Secrets = Field(default_factory=Secrets)
 

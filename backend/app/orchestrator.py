@@ -12,10 +12,11 @@ import random
 from collections.abc import Callable
 from typing import Any
 
-from app.agents.base import BaseAnalyst, BasePlayer, MoveProposal
-from app.engine import ChessEngine, IllegalMoveError
+from app.agents.base import BaseAnalyst, BaseCommentator, BasePlayer, MoveContext, MoveProposal
+from app.engine import ChessEngine, IllegalMoveError, MoveRecord
 from app.events import EventBus, EventType
 from app.store import GameStore
+from app.thinking import ReasoningBuffer, pace_window
 from app.verdict import GameFacts
 
 log = logging.getLogger(__name__)
@@ -38,11 +39,15 @@ class GameOrchestrator:
         store: GameStore,
         bus: EventBus | None = None,
         analyst: BaseAnalyst | None = None,
+        commentator: BaseCommentator | None = None,
         max_moves: int = 120,
         illegal_move_retries: int = 3,
         move_delay_ms: int = 0,
         max_requests_per_game: int = 250,
         commentary_every_n_moves: int = 0,
+        move_commentary_enabled: bool = False,
+        move_commentary_every_n_moves: int = 1,
+        thinking_window_ms: int = 0,
         seed: int | None = None,
         request_counter: Callable[[], int] | None = None,
     ) -> None:
@@ -50,7 +55,12 @@ class GameOrchestrator:
         self.white = white
         self.black = black
         self.analyst = analyst
+        self.commentator = commentator
         self.commentary_every_n_moves = commentary_every_n_moves
+        self.move_commentary_enabled = move_commentary_enabled
+        self.move_commentary_every_n_moves = max(1, move_commentary_every_n_moves)
+        # > 0 turns on "Too Slow" mode: a live-thinking window per move (F1).
+        self.thinking_window_ms = thinking_window_ms
         self.store = store
         self.bus = bus or EventBus(game_id)
         self.engine = ChessEngine(max_moves=max_moves)
@@ -120,7 +130,9 @@ class GameOrchestrator:
                 await self._play_one_turn()
                 await self._maybe_comment()
 
-                if self.move_delay_ms:
+                # The thinking window already paces "Too Slow" mode, so the plain
+                # move delay would only add dead air on top of it.
+                if self.move_delay_ms and not self.thinking_window_ms:
                     await asyncio.sleep(self.move_delay_ms / 1000)
 
         except Exception as exc:  # a crash must not leave the game "in_progress"
@@ -144,13 +156,17 @@ class GameOrchestrator:
             {"color": color, "model": player.model, "move_number": engine.move_number},
         )
 
-        proposal = await player.get_move(
-            fen=engine.fen,
-            legal_moves=legal,
-            move_history_san=engine.san_history(last_n=10),
-            move_number=engine.move_number,
-            retry_budget=self.illegal_move_retries,
-        )
+        if self.thinking_window_ms > 0:
+            proposal, thinking_text = await self._think_and_move(player, color, legal)
+        else:
+            proposal = await player.get_move(
+                fen=engine.fen,
+                legal_moves=legal,
+                move_history_san=engine.san_history(last_n=10),
+                move_number=engine.move_number,
+                retry_budget=self.illegal_move_retries,
+            )
+            thinking_text = ""
 
         # Report each rejected attempt individually — the UI badges them and the
         # Analyst grades on them (§13: every illegal attempt visible and stored).
@@ -181,6 +197,7 @@ class GameOrchestrator:
             reasoning=proposal.reasoning,
             attempts=proposal.attempts,
             forfeited=proposal.forfeited,
+            thinking=thinking_text or None,
         )
 
         self._emit(
@@ -193,6 +210,8 @@ class GameOrchestrator:
                 "san": record.san,
                 "fen": record.fen_after,
                 "reasoning": proposal.reasoning,
+                # Full streamed reasoning, so "click a move → see its thinking"
+                "thinking": thinking_text,
                 "attempts": proposal.attempts,
                 "forfeited": proposal.forfeited,
                 "is_check": record.is_check,
@@ -202,6 +221,104 @@ class GameOrchestrator:
                 "requests_used": self.requests_used,
             },
         )
+
+        # Feature 2: the presentation item's commentary, paired to this move by
+        # ply. The game loop may run ahead; the frontend queue keeps the board
+        # from advancing before the voice finishes speaking.
+        await self._maybe_move_commentary(record, proposal.reasoning, color)
+
+    async def _think_and_move(
+        self, player: BasePlayer, color: str, legal: list[str]
+    ) -> tuple[MoveProposal, str]:
+        """Run one move inside the fixed "Too Slow" window (F1).
+
+        The model runs concurrently, streaming reasoning into a buffer; the pacer
+        reveals that buffer over exactly the window so the panel always feels
+        full. MOVE_MADE fires only after the window closes (the caller emits it).
+        """
+        engine = self.engine
+        move_number = engine.move_number
+        window_s = self.thinking_window_ms / 1000
+        buffer = ReasoningBuffer()
+        collected: list[str] = []
+
+        def sink(chunk: str) -> None:
+            collected.append(chunk)
+            buffer.feed(chunk)
+
+        def emit_token(chunk: str) -> None:
+            self._emit(
+                EventType.AGENT_THINKING_TOKEN,
+                {
+                    "color": color,
+                    "model": player.model,
+                    "move_number": move_number,
+                    "text_chunk": chunk,
+                },
+            )
+
+        async def produce() -> MoveProposal:
+            try:
+                return await player.get_move(
+                    fen=engine.fen,
+                    legal_moves=legal,
+                    move_history_san=engine.san_history(last_n=10),
+                    move_number=move_number,
+                    retry_budget=self.illegal_move_retries,
+                    token_sink=sink,
+                )
+            finally:
+                # However the model ended — finished, cut off, or failed — the
+                # pacer needs to know no more tokens are coming.
+                buffer.finish()
+
+        task = asyncio.create_task(produce())
+        try:
+            await pace_window(buffer, emit_token, window_s)
+        finally:
+            # Ensure the move is ready even if it was still going at the deadline.
+            proposal = await task
+        return proposal, "".join(collected)
+
+    async def _maybe_move_commentary(
+        self, record: MoveRecord, reasoning: str, color: str
+    ) -> None:
+        if not self.commentator or not self.move_commentary_enabled:
+            return
+        if record.ply % self.move_commentary_every_n_moves != 0:
+            return
+
+        ctx = MoveContext(
+            mover="White" if color == "white" else "Black",
+            color=color,
+            san=record.san,
+            fen=record.fen_after,
+            reasoning=reasoning,
+            is_capture=record.is_capture,
+            is_check=record.is_check,
+            is_checkmate=record.is_checkmate,
+            captured_piece=record.captured_piece,
+        )
+        try:
+            result = await self.commentator.comment_move(ctx)
+        except Exception:
+            # The broadcast voice never taking the game down is the whole point.
+            log.exception("Move commentary failed for game %s", self.game_id)
+            return
+
+        if result.text:
+            self._emit(
+                EventType.MOVE_COMMENTARY,
+                {
+                    "ply": record.ply,
+                    "move_number": record.move_number,
+                    "color": color,
+                    "text": result.text,
+                    # The true source of THIS line — a rate-limited fallback is
+                    # honestly labelled "template", not "model".
+                    "source": result.source,
+                },
+            )
 
     def _enforce_legality(
         self, proposal: MoveProposal, legal: list[str], color: str, model: str

@@ -9,10 +9,12 @@ export type Color = 'white' | 'black'
 export type EventType =
   | 'GAME_STARTED'
   | 'AGENT_THINKING'
+  | 'AGENT_THINKING_TOKEN'
   | 'MOVE_MADE'
   | 'ILLEGAL_ATTEMPT'
   | 'MOVE_FORFEITED'
   | 'COMMENTARY'
+  | 'MOVE_COMMENTARY'
   | 'GAME_OVER'
   | 'VERDICT'
   | 'ERROR'
@@ -33,6 +35,14 @@ export type AgentThinkingData = {
   move_number: number
 }
 
+/** One streamed reasoning token during the "Too Slow" window (Feature 1). */
+export type AgentThinkingTokenData = {
+  color: Color
+  model: string
+  move_number: number
+  text_chunk: string
+}
+
 export type MoveMadeData = {
   ply: number
   move_number: number
@@ -41,6 +51,8 @@ export type MoveMadeData = {
   san: string
   fen: string
   reasoning: string
+  // Full streamed reasoning in "Too Slow" mode; '' otherwise (Feature 1).
+  thinking: string
   attempts: number
   forfeited: boolean
   is_check: boolean
@@ -48,6 +60,15 @@ export type MoveMadeData = {
   is_capture: boolean
   captured_piece: string | null
   requests_used: number
+}
+
+/** A presentation item's spoken commentary, paired to a move by ply (Feature 2). */
+export type MoveCommentaryData = {
+  ply: number
+  move_number: number
+  color: Color
+  text: string
+  source: 'model' | 'template'
 }
 
 export type IllegalAttemptData = {
@@ -134,6 +155,7 @@ export type StoredMove = {
   san: string
   fen_after: string
   reasoning: string | null
+  thinking: string | null
   attempts: number
   forfeited: number // SQLite has no bool; 0 | 1
   is_check: number

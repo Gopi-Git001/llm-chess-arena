@@ -12,14 +12,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AgentPanel from './components/AgentPanel'
 import AnalystPanel from './components/AnalystPanel'
 import Board from './components/Board'
-import GameControls from './components/GameControls'
+import GameControls, { TOO_SLOW_MS } from './components/GameControls'
 import GameHistory from './components/GameHistory'
 import MoveList from './components/MoveList'
 import PlaybackControls from './components/PlaybackControls'
+import ThinkingPanel from './components/ThinkingPanel'
 import { abortGame, createGame, fetchModels, streamGame, type FreeModel } from './api/ws'
 import { START_FEN, lastMoveSquares, useGameStore, type Color, type MoveRow } from './state/gameStore'
 import { useSounds } from './hooks/useSounds'
-import { useVoiceCommentary } from './hooks/useVoiceCommentary'
+import { usePresentation } from './hooks/usePresentation'
+import { TTSService } from './lib/tts'
 
 function gameIdFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get('game')
@@ -51,8 +53,10 @@ export default function App() {
   // voice — turning it on gives you the play-by-play out loud.
   const [commentary, setCommentary] = useState(false)
   const [soundOn, setSoundOn] = useState(true)
+  const [voiceMuted, setVoiceMuted] = useState(false)
   const [mode, setMode] = useState<string | null>(null)
   const [requestBudget, setRequestBudget] = useState(250)
+  const [tooSlowWindowMs, setTooSlowWindowMs] = useState(10000)
   const [historyOpen, setHistoryOpen] = useState(false)
 
   // Scrubber: null = follow live; a ply number = frozen at that position.
@@ -63,11 +67,22 @@ export default function App() {
   const [blackModel, setBlackModel] = useState('')
   const [analystModel, setAnalystModel] = useState('')
 
+  const tooSlow = speedMs === TOO_SLOW_MS
+
   const store = useGameStore()
   const playSound = useSounds(soundOn)
-  // Speaks the opener, move reactions, analyst lines, and the finale aloud
-  // whenever commentary is on.
-  const { supported: voiceSupported } = useVoiceCommentary(commentary)
+
+  // One TTS engine for the whole app; the presentation queue speaks through it,
+  // so utterances never overlap and the board waits for each to finish.
+  const tts = useMemo(() => new TTSService(), [])
+  const voiceSupported = tts.supported
+  useEffect(() => {
+    tts.setMuted(voiceMuted)
+  }, [tts, voiceMuted])
+
+  // When commentary is on, the board is driven by the presentation queue (one
+  // move spoken to completion before the next animates), not raw MOVE_MADE.
+  const presentation = usePresentation({ enabled: commentary, gameId, tts })
 
   // Config + model list on load.
   useEffect(() => {
@@ -76,6 +91,7 @@ export default function App() {
       .then((h) => {
         setMode(h.mode)
         if (h.max_requests_per_game) setRequestBudget(h.max_requests_per_game)
+        if (h.too_slow_window_ms) setTooSlowWindowMs(h.too_slow_window_ms)
         setWhiteModel((v) => v || h.models.white)
         setBlackModel((v) => v || h.models.black)
         setAnalystModel((v) => v || h.models.analyst)
@@ -100,24 +116,29 @@ export default function App() {
     return dispose
   }, [gameId])
 
-  // Sound effects, driven off the growing move list. A single new ply is a live
+  // The move currently on the board: the presentation-queue's ply when
+  // commentary drives the board, else the latest live move.
+  const visibleMove = presentation.active
+    ? store.moves.find((m) => m.ply === presentation.presentedPly) ?? null
+    : store.moves.at(-1) ?? null
+
+  // Sound effects, driven off the visible move. A single new ply is a live
   // move (play it); a jump of many plies is a rehydration (stay silent).
   const soundedPlyRef = useRef(0)
   const gameOverSoundedRef = useRef<string | null>(null)
   useEffect(() => {
-    const last = store.moves.at(-1)
-    if (!last) {
+    if (!visibleMove) {
       soundedPlyRef.current = 0
       return
     }
-    if (last.ply === soundedPlyRef.current + 1) {
-      if (last.forfeited) playSound('forfeit')
-      else if (last.isCheck) playSound('check')
-      else if (last.isCapture) playSound('capture')
+    if (visibleMove.ply === soundedPlyRef.current + 1) {
+      if (visibleMove.forfeited) playSound('forfeit')
+      else if (visibleMove.isCheck) playSound('check')
+      else if (visibleMove.isCapture) playSound('capture')
       else playSound('move')
     }
-    soundedPlyRef.current = last.ply
-  }, [store.moves, playSound])
+    soundedPlyRef.current = visibleMove.ply
+  }, [visibleMove, playSound])
 
   useEffect(() => {
     if (store.status === 'finished' && gameId && gameOverSoundedRef.current !== gameId) {
@@ -139,10 +160,14 @@ export default function App() {
         whiteModel,
         blackModel,
         analystModel,
-        moveDelayMs: speedMs,
+        // "Too Slow" mode uses a live-thinking window instead of a plain delay.
+        moveDelayMs: tooSlow ? 0 : speedMs,
+        thinkingWindowMs: tooSlow ? tooSlowWindowMs : 0,
         illegalRate: chaos ? 0.6 : 0,
         forfeitRate: chaos ? 0.15 : 0,
-        commentaryEveryNMoves: commentary ? 6 : 0,
+        // The Commentary toggle now drives the synced voice/move commentary (F2).
+        moveCommentaryEnabled: commentary,
+        commentaryEveryNMoves: 0,
       })
       useGameStore.getState().startNewGame(created.game_id)
       putGameIdInUrl(created.game_id)
@@ -153,7 +178,7 @@ export default function App() {
     } finally {
       setBusy(false)
     }
-  }, [whiteModel, blackModel, analystModel, speedMs, chaos, commentary])
+  }, [whiteModel, blackModel, analystModel, speedMs, tooSlow, tooSlowWindowMs, chaos, commentary])
 
   const [aborting, setAborting] = useState(false)
   const handleAbort = useCallback(async () => {
@@ -195,14 +220,34 @@ export default function App() {
   const gameOver =
     store.status === 'finished' || store.status === 'aborted' || store.status === 'error'
 
-  // What the board shows: live latest, or a scrubbed-to position.
-  const displayFen = viewPly === null ? store.fen : fenAtPly(store.moves, viewPly)
+  // What the board shows: the presentation-queue position when commentary is
+  // driving it, else the latest live FEN — or a scrubbed-to position.
+  const liveFen = presentation.active ? presentation.displayFen : store.fen
+  const liveLastMove = presentation.active
+    ? presentation.displayLastMove
+    : lastMoveSquares(store.moves)
+  const displayFen = viewPly === null ? liveFen : fenAtPly(store.moves, viewPly)
   const displayLastMove =
-    viewPly === null ? lastMoveSquares(store.moves) : squaresAtPly(store.moves, viewPly)
+    viewPly === null ? liveLastMove : squaresAtPly(store.moves, viewPly)
 
   const nextToMove: Color = store.moves.length % 2 === 0 ? 'white' : 'black'
   const whiteLast = useMemo(() => store.moves.filter((m) => m.color === 'white').at(-1) ?? null, [store.moves])
   const blackLast = useMemo(() => store.moves.filter((m) => m.color === 'black').at(-1) ?? null, [store.moves])
+
+  // Live thinking (streaming now) vs a scrubbed-to move's stored reasoning (F1).
+  const thinkingFor = (color: Color) => {
+    const live = store.thinking === color ? store.thinkingText[color] : ''
+    if (live) return { text: live, streaming: true, label: 'live' }
+    const selected = viewPly != null ? store.moves.find((m) => m.ply === viewPly) : null
+    if (selected && selected.color === color && selected.thinking) {
+      return { text: selected.thinking, streaming: false, label: `move ${selected.moveNumber}` }
+    }
+    return { text: '', streaming: false, label: '' }
+  }
+  const whiteThinking = thinkingFor('white')
+  const blackThinking = thinkingFor('black')
+  const showWhiteThinking = tooSlow || Boolean(whiteThinking.text)
+  const showBlackThinking = tooSlow || Boolean(blackThinking.text)
 
   return (
     <div className="min-h-full bg-zinc-950 text-zinc-100">
@@ -225,6 +270,8 @@ export default function App() {
           onChaosChange={setChaos}
           commentary={commentary}
           onCommentaryChange={setCommentary}
+          voiceMuted={voiceMuted}
+          onVoiceMutedChange={setVoiceMuted}
           soundOn={soundOn}
           onSoundChange={setSoundOn}
           voiceSupported={voiceSupported}
@@ -256,6 +303,14 @@ export default function App() {
             active={Boolean(gameId)}
             toMove={running && nextToMove === 'white'}
           />
+          {showWhiteThinking && (
+            <ThinkingPanel
+              color="white"
+              text={whiteThinking.text}
+              streaming={whiteThinking.streaming}
+              label={whiteThinking.label}
+            />
+          )}
           <AgentPanel
             color="black"
             model={store.blackModel || blackModel}
@@ -266,6 +321,14 @@ export default function App() {
             active={Boolean(gameId)}
             toMove={running && nextToMove === 'black'}
           />
+          {showBlackThinking && (
+            <ThinkingPanel
+              color="black"
+              text={blackThinking.text}
+              streaming={blackThinking.streaming}
+              label={blackThinking.label}
+            />
+          )}
         </div>
 
         {/* Centre: board + scrubber + result banner. Board first on mobile. */}
@@ -312,6 +375,8 @@ export default function App() {
           {gameId ? (
             <AnalystPanel
               comments={store.comments}
+              captions={store.captions}
+              speakingPly={presentation.speakingPly}
               verdict={store.verdict}
               rateLimit={store.rateLimit}
               status={store.status}

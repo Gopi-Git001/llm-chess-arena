@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agents.analyst import AnalystAgent, MockAnalyst
-from app.agents.base import BaseAnalyst, BasePlayer
+from app.agents.base import BaseAnalyst, BaseCommentator, BasePlayer
+from app.agents.commentator import CommentatorAgent, MockCommentator
 from app.agents.player import MockPlayer, PlayerAgent
 from app.config import Settings
 from app.events import EventBus, EventType
@@ -53,6 +54,11 @@ class GameSettings:
     illegal_move_retries: int | None = None
     seed: int | None = None
     commentary_every_n_moves: int | None = None
+    # > 0 opts this game into "Too Slow" mode (F1); None/0 uses config default off.
+    thinking_window_ms: int | None = None
+    # Move/voice commentary (F2). None falls back to config.
+    move_commentary_enabled: bool | None = None
+    move_commentary_every_n_moves: int | None = None
     # Mock-only knobs, so the illegal/forfeit UI states can be demoed on demand.
     illegal_rate: float = 0.0
     forfeit_rate: float = 0.0
@@ -92,12 +98,26 @@ class GameManager:
         bus = EventBus(game_id)
         white, black, llm_client = self._build_players(white_model, black_model, opts, bus)
         analyst = self._build_analyst(analyst_model, llm_client, opts)
+        commentator = self._build_commentator(cfg.openrouter.commentator_model, llm_client)
+
+        thinking_window_ms = opts.thinking_window_ms or 0
+        move_commentary_enabled = (
+            cfg.commentary.enabled
+            if opts.move_commentary_enabled is None
+            else opts.move_commentary_enabled
+        )
+        move_commentary_every_n_moves = (
+            cfg.commentary.every_n_moves
+            if opts.move_commentary_every_n_moves is None
+            else opts.move_commentary_every_n_moves
+        )
 
         orchestrator = GameOrchestrator(
             game_id=game_id,
             white=white,
             black=black,
             analyst=analyst,
+            commentator=commentator,
             store=self.store,
             bus=bus,
             commentary_every_n_moves=(
@@ -105,6 +125,9 @@ class GameManager:
                 if opts.commentary_every_n_moves is None
                 else opts.commentary_every_n_moves
             ),
+            move_commentary_enabled=move_commentary_enabled,
+            move_commentary_every_n_moves=move_commentary_every_n_moves,
+            thinking_window_ms=thinking_window_ms,
             max_moves=opts.max_moves or cfg.game.max_moves,
             illegal_move_retries=opts.illegal_move_retries or cfg.game.illegal_move_retries,
             move_delay_ms=(
@@ -130,6 +153,18 @@ class GameManager:
             model=analyst_model,
             client=llm_client,
             max_tokens=self.settings.openrouter.max_tokens_analysis,
+        )
+
+    def _build_commentator(
+        self, commentator_model: str, llm_client: OpenRouterClient | None
+    ) -> BaseCommentator:
+        if llm_client is None:  # mock mode → template commentary, zero calls
+            return MockCommentator(model=commentator_model)
+        # Reuses the shared client/throttle/budget, like the analyst (§F2a).
+        return CommentatorAgent(
+            model=commentator_model,
+            client=llm_client,
+            max_tokens=self.settings.openrouter.max_tokens_commentary,
         )
 
     def _build_players(

@@ -137,10 +137,12 @@ openrouter:
   white_model: openai/gpt-oss-120b:free
   black_model: meta-llama/llama-3.3-70b-instruct:free
   analyst_model: qwen/qwen3-coder:free
+  commentator_model: qwen/qwen3-coder:free  # live move commentary (Feature 2)
   fallback_model: openrouter/free
   request_timeout_s: 60
   max_tokens_move: 300
   max_tokens_analysis: 1500
+  max_tokens_commentary: 120         # one or two spoken sentences per move
 
 throttle:
   min_seconds_between_requests: 4    # 15/min, safely under the 20/min cap
@@ -151,9 +153,41 @@ game:
   illegal_move_retries: 3            # then random legal move fallback
   live_commentary_every_n_moves: 0   # 0 = off (saves quota); 5 = chatty mode
   move_delay_ui_ms: 800              # min pacing so the UI feels watchable
+  too_slow_window_ms: 10000          # "Too Slow" per-move live-thinking window (F1)
+
+# Voice/move commentary synced to the board (Feature 2). One extra LLM call per
+# commented move in live mode; template fallback keeps the voice from going
+# silent, and mock mode always uses templates (zero calls).
+commentary:
+  enabled: true
+  every_n_moves: 1
 
 mode: live                           # live | mock
 ```
+
+### Feature add-ons (post-Phase-5)
+
+**Feature 1 — "Too Slow" speed mode.** A fourth speed beyond Fast/Watchable/Slow.
+Each model gets a fixed `too_slow_window_ms` (default 10s) per move. During the
+window the model's reasoning streams live to a per-player Thinking panel: the
+player calls OpenRouter with `stream: true` and a reasoning-first prompt variant,
+and reasoning tokens are forwarded as `AGENT_THINKING_TOKEN` events. A pacer
+(`app/thinking.py`) reveals buffered tokens across the window — finishing early
+spreads the remainder over the leftover time; still going at the deadline cuts
+the display. `MOVE_MADE` fires only after the window closes. Move
+parsing/validation/retry is unchanged — streaming is presentation only. The full
+reasoning is stored per move (`moves.thinking`) and shown when a move is clicked.
+
+**Feature 2 — synced voice commentary.** A commentator agent (`commentator_model`,
+reusing the shared client/throttle) produces 1–2 broadcaster-style sentences per
+move as `MOVE_COMMENTARY` events. The frontend drives the board from a
+**presentation queue** (`lib/presentationQueue.ts`): one item at a time —
+animate the move → speak the commentary → await the utterance's `end` → advance.
+The board is never allowed ahead of the voice; the game loop may run ahead of
+presentation. TTS is the browser `speechSynthesis` API wrapped in a `TTSService`
+(promise-per-utterance, queue guard, voice/rate/pitch, mute-keeps-captions).
+On rate-limit/LLM failure the commentator falls back to `template_move_commentary`
+(engine facts), and mock mode always uses templates — the voice never goes silent.
 
 ---
 
@@ -199,7 +233,15 @@ mode: live                           # live | mock
 ```
 
 **WebSocket event types** (single schema, `frontend/src/types/events.ts` mirrors it):
-`GAME_STARTED, AGENT_THINKING, MOVE_MADE, ILLEGAL_ATTEMPT, MOVE_FORFEITED, COMMENTARY, GAME_OVER, VERDICT, ERROR, RATE_LIMITED`
+`GAME_STARTED, AGENT_THINKING, AGENT_THINKING_TOKEN, MOVE_MADE, ILLEGAL_ATTEMPT, MOVE_FORFEITED, COMMENTARY, MOVE_COMMENTARY, GAME_OVER, VERDICT, ERROR, RATE_LIMITED`
+
+- `AGENT_THINKING_TOKEN {color, model, move_number, text_chunk}` — one streamed
+  reasoning token during a "Too Slow" window (Feature 1).
+- `MOVE_COMMENTARY {ply, move_number, color, text, source}` — one presentation
+  item's spoken commentary, paired to a move by `ply` (Feature 2). `source` is
+  `model` or `template`.
+- `MOVE_MADE` gains a `thinking` field: the full streamed reasoning (empty
+  outside "Too Slow" mode).
 
 ---
 
