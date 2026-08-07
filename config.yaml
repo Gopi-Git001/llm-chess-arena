@@ -22,7 +22,10 @@ openrouter:
   max_tokens_commentary: 120         # one or two spoken sentences per move
 
 throttle:
-  min_seconds_between_requests: 4    # 15/min, safely under the 20/min cap
+  # 6s = 10/min. Wider than the old 4s (15/min) on purpose: dodging a single
+  # 429 is worth far more than the extra spacing, since the backoff ladder
+  # costs 10/30/60s per refusal.
+  min_seconds_between_requests: 6
   max_requests_per_game: 250         # hard kill-switch
 
 game:
@@ -36,7 +39,10 @@ game:
 # commented move in live mode; template fallback keeps the voice from going
 # silent, and mock mode always uses templates (zero calls).
 commentary:
-  enabled: true
+  # OFF by default for live runs: it is one extra LLM call PER MOVE, which
+  # doubles the request rate against the free tier's per-minute cap and was a
+  # major cause of 429 backoffs. Turn on for mock (templates, zero calls).
+  enabled: false
   every_n_moves: 1
 
 # mock = zero API calls (MockPlayer/MockAnalyst). live = real OpenRouter calls.
