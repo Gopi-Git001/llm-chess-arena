@@ -28,7 +28,9 @@ class OpenRouterConfig(BaseModel):
     commentator_model: str = "qwen/qwen3-coder:free"
     fallback_model: str = "openrouter/free"
     request_timeout_s: float = 60
-    max_tokens_move: int = 300
+    # Must fit a reasoning model's thinking tokens AND the JSON move; 300 was
+    # exhausted mid-reasoning and the move never got emitted.
+    max_tokens_move: int = 1000
     max_tokens_analysis: int = 1500
     # Move commentary is short by design — one or two spoken sentences.
     max_tokens_commentary: int = 120
