@@ -23,7 +23,7 @@ game:
   illegal_move_retries: 3            # then random legal move fallback
   live_commentary_every_n_moves: 0   # 0 = off (saves quota); 5 = chatty mode
   move_delay_ui_ms: 800              # min pacing so the UI feels watchable
-  too_slow_window_ms: 10000          # "Too Slow" per-move live-thinking window
+  too_slow_window_ms: 5000           # "Too Slow" per-move live-thinking window
 
 # Voice/move commentary synced to the board (Feature 2). One extra LLM call per
 # commented move in live mode; template fallback keeps the voice from going

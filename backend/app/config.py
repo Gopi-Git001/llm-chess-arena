@@ -46,7 +46,7 @@ class GameConfig(BaseModel):
     move_delay_ui_ms: int = 800
     # "Too Slow" mode: a fixed per-move thinking window during which the model's
     # reasoning streams live to the UI (Feature 1). Only used when a game opts in.
-    too_slow_window_ms: int = 10_000
+    too_slow_window_ms: int = 5_000
 
 
 class CommentaryConfig(BaseModel):
